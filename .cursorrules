@@ -1,0 +1,137 @@
+# TradeEdge Project Rules
+
+## Architecture Principles
+
+1. **Modular Python "Brains"**: Each analytics module is an independent script that:
+   - Takes input, returns output (no shared state)
+   - Outputs JSON to stdout for easy testing and integration
+   - Can be run standalone via CLI
+   - Has no dependencies on other scripts running first
+
+2. **JSON-First Output**: All Python modules must output structured JSON:
+   - Use `json.dumps()` for CLI output
+   - Include `last_updated` timestamp in ISO format
+   - Include error handling with clear error messages
+   - Validate JSON structure before returning
+
+3. **Data Caching**: All external API calls must be cached:
+   - Cache location: `data/cache/{source}/{series}_{date}.json`
+   - Cache TTL: Daily for market data, weekly for economic data
+   - Always check cache before making API calls
+   - Include cache hit/miss logging
+
+4. **Error Handling**: 
+   - Never fail silently - log warnings/errors
+   - Return partial results if some data is unavailable
+   - Include `error` field in JSON output if issues occur
+   - Use try/except blocks around all external API calls
+
+## Coding Standards
+
+### Python
+- Use type hints for all function parameters and returns
+- Include docstrings for all classes and functions
+- Follow PEP 8 style guide
+- Use `pathlib.Path` for file operations
+- Use `datetime` objects, convert to ISO strings for JSON
+
+### Testing
+- Each module must be testable via CLI: `python module.py`
+- CLI mode should output JSON to stdout
+- Include unit tests in `backend/tests/`
+- Test with known inputs and verify JSON structure
+
+### Data Sources
+- FRED API: Use `fredapi` library, cache responses
+- Yahoo Finance: Use `yfinance` library, cache daily data
+- Google Trends: Use `pytrends` library, handle rate limits
+
+## CMDS Calculation Formula
+
+```python
+CMDS = (0.65 × FRS) + (0.35 × VP)
+```
+
+Where:
+- FRS = Fundamental Risk Score (0-100)
+- VP = Volatility Predictor score (0-100)
+- CMDS = Combined Market Danger Score (0-100)
+
+Allocation zones:
+- 0-25: SAFE (90-100% equity)
+- 26-45: CAUTIOUS (70-90% equity)
+- 46-65: ELEVATED (50-70% equity)
+- 66-80: HIGH (30-50% equity)
+- 81-100: EXTREME (10-30% equity)
+
+## FRS Component Scoring
+
+### Category 1: Macro/Cycle (0-30 points)
+- Unemployment trend: 0-10 points (delta from 12-month low)
+- Yield curve: 0-10 points (inversion depth/duration)
+- GDP vs stall speed: 0-10 points (<1.5% = 10 pts)
+
+### Category 2: Valuation (0-25 points)
+- Forward P/E: 0-10 points (22x+ = 10 pts)
+- Buffett Indicator: 0-10 points (>140% = 10 pts)
+- Equity yield vs T-bills: 0-10 points (equity yield < T-bills = 10 pts)
+- Scaled to max 25 points
+
+### Category 3: Leverage & Stability (0-25 points)
+- Hedge fund leverage: 0-10 points (manual input)
+- Corporate credit: 0-10 points (HY spreads)
+- CRE stress: 0-10 points (delinquency rates)
+- Scaled to max 25 points
+
+### Category 4: Earnings (0-10 points)
+- Earnings breadth: Compare S&P 500 vs equal-weight
+- Margin vulnerability: Track profit margins
+
+### Category 5: Sentiment (-10 to +10 points)
+- Can reduce total risk if extreme fear + cash on sidelines
+- Consumer confidence, VIX, money market assets
+
+## File Organization
+
+- Python modules: `backend/analytics/{category}/{module}.py`
+- Data fetchers: `backend/analytics/data_fetchers/{source}_client.py`
+- API endpoints: `backend/api/main.py`
+- Tests: `backend/tests/test_{module}.py`
+- Cache: `data/cache/{source}/{file}.json`
+- Config: `data/config/{file}.json`
+
+## API Design
+
+- FastAPI endpoints: `/api/{module_name}`
+- All endpoints return JSON
+- Include CORS headers for frontend
+- Cache responses for 5-15 minutes
+- Health check endpoint: `/api/health`
+
+## Frontend Integration
+
+- Next.js app router with TypeScript
+- Use SWR for data fetching with auto-refresh
+- Components in `frontend/components/`
+- Pages in `frontend/app/`
+- Use shadcn/ui for UI components
+- Use Recharts for data visualization
+
+## Development Workflow
+
+1. Build Python module standalone first
+2. Test via CLI with JSON output
+3. Add to FastAPI wrapper
+4. Test API endpoint
+5. Integrate into frontend
+6. Write tests
+
+## Important Notes
+
+- Never modify the plan file itself
+- Always validate JSON output structure
+- Handle missing data gracefully
+- Log important operations for debugging
+- Use environment variables for API keys
+- Never commit API keys or sensitive data
+
