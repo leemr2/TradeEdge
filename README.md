@@ -93,8 +93,16 @@ tradeedge/
 │   ├── analytics/
 │   │   ├── core/
 │   │   │   ├── volatility_predictor.py  # VP calculator
-│   │   │   ├── frs_calculator.py        # FRS calculator
-│   │   │   └── cmds_calculator.py       # CMDS calculator
+│   │   │   ├── frs_calculator.py        # FRS calculator (orchestrator)
+│   │   │   ├── cmds_calculator.py       # CMDS calculator
+│   │   │   ├── manual_inputs.py         # Manual input manager
+│   │   │   └── categories/             # Modular FRS categories
+│   │   │       ├── base_category.py     # Abstract base class
+│   │   │       ├── macro_cycle.py       # Category 1: Macro/Cycle
+│   │   │       ├── valuation.py         # Category 2: Valuation
+│   │   │       ├── leverage_stability.py # Category 3: Leverage & Stability
+│   │   │       ├── earnings_margins.py   # Category 4: Earnings & Margins
+│   │   │       └── sentiment.py         # Category 5: Sentiment
 │   │   └── data_fetchers/
 │   │       ├── fred_client.py          # FRED API wrapper
 │   │       └── yfinance_client.py      # Yahoo Finance wrapper
@@ -105,10 +113,15 @@ tradeedge/
 ├── frontend/
 │   ├── app/                            # Next.js app router
 │   ├── components/                     # React components
-│   └── lib/                           # Utilities
+│   │   ├── FRSDisplay.tsx              # Main FRS display
+│   │   ├── CategoryCard.tsx            # Expandable category cards
+│   │   ├── ComponentDetail.tsx         # Component breakdown
+│   │   └── ManualInputEditor.tsx       # Manual input editor
+│   └── lib/                           # Utilities & API client
 └── data/
     ├── cache/                         # Cached API data
     └── config/                        # Configuration files
+        └── manual_inputs.json         # Manual input values
 ```
 
 ## Testing Individual Modules
@@ -119,7 +132,7 @@ Each Python module can be run standalone:
 # Volatility Predictor
 python -m analytics.core.volatility_predictor --mode json
 
-# FRS Calculator
+# FRS Calculator (full calculation with all categories)
 python -m analytics.core.frs_calculator
 
 # CMDS Calculator
@@ -129,13 +142,45 @@ python -m analytics.core.cmds_calculator
 python scripts/test_all_modules.py
 ```
 
+### Testing FRS Categories Individually
+
+The FRS calculator is now modular. Test individual categories:
+
+```python
+# Example: Test Macro/Cycle category
+from analytics.data_fetchers.fred_client import FredClient
+from analytics.data_fetchers.yfinance_client import YFinanceClient
+from analytics.core.categories.macro_cycle import MacroCycleCategory
+from analytics.core.manual_inputs import load_manual_inputs
+
+fred = FredClient()
+yfinance = YFinanceClient()
+manual_inputs = load_manual_inputs()
+
+macro = MacroCycleCategory(fred_client=fred, yfinance_client=yfinance, manual_inputs=manual_inputs)
+result = macro.calculate()
+print(result)
+```
+
 ## API Endpoints
 
+### Core Endpoints
 - `GET /api/health` - Health check
 - `GET /api/volatility` - Get VP score
-- `GET /api/frs` - Get FRS score
+- `GET /api/frs` - Get FRS score (includes detailed category breakdowns)
 - `GET /api/cmds` - Get CMDS score
 - `GET /api/cmds?frs_weight=0.7&vp_weight=0.3` - Custom weights
+
+### Manual Inputs Management
+- `GET /api/frs/manual-inputs` - Get current manual input values
+- `POST /api/frs/manual-inputs` - Update manual input values
+  ```json
+  {
+    "hedge_fund_leverage": 10,
+    "cre_delinquency_rate": 5.0,
+    "as_of": "2025-12-09"
+  }
+  ```
 
 ## Development
 
@@ -145,6 +190,39 @@ python scripts/test_all_modules.py
 cd backend
 pytest tests/
 ```
+
+### Testing FRS Categories
+
+The FRS calculator is modular - test individual categories:
+
+```bash
+# Run unit tests for categories
+pytest tests/test_frs_categories.py
+
+# Test specific category
+pytest tests/test_frs_categories.py::test_macro_cycle
+
+# Test manual inputs
+pytest tests/test_manual_inputs.py
+```
+
+### Manual Input Management
+
+Manual inputs are stored in `data/config/manual_inputs.json` and can be updated:
+
+**Via API:**
+```bash
+curl -X POST http://localhost:8000/api/frs/manual-inputs \
+  -H "Content-Type: application/json" \
+  -d '{"hedge_fund_leverage": 10, "cre_delinquency_rate": 5.0}'
+```
+
+**Via File:**
+Edit `data/config/manual_inputs.json` directly. Values will be loaded on next FRS calculation.
+
+**Update Schedule:**
+- **Hedge Fund Leverage**: Update semi-annually (May, November) from Fed Financial Stability Report
+- **CRE Delinquency**: Update quarterly (~6 weeks after quarter end) from FDIC Quarterly Banking Profile
 
 ### Training VP Model
 
@@ -160,6 +238,25 @@ All external API data is cached locally:
 - FRED data: `data/cache/fred/` (7-day TTL)
 - Yahoo Finance: `data/cache/yfinance/` (24-hour TTL)
 - Trained models: `data/cache/models/`
+- Configuration: `data/config/manual_inputs.json`
+
+### FRS Category Architecture
+
+The FRS calculator uses a modular architecture with 5 independent categories:
+
+1. **Macro/Cycle** (0-30 points): Unemployment, yield curve, GDP growth
+2. **Valuation** (0-25 points): Forward P/E, Buffett Indicator, equity yield vs T-bills
+3. **Leverage & Stability** (0-25 points): Hedge fund leverage, corporate credit, CRE stress
+4. **Earnings & Margins** (0-10 points): Earnings breadth (concentration)
+5. **Sentiment** (-10 to +10 points): VIX-based contrarian indicator
+
+Each category:
+- Can be tested independently
+- Returns detailed component breakdowns
+- Includes metadata (update frequency, data sources, next update dates)
+- Can be improved without affecting other categories
+
+See `backend/FRS Category Reference Guide.md` for complete documentation.
 
 ## Architecture
 

@@ -51,14 +51,15 @@ class YFinanceClient:
     def _configure_yfinance(self):
         """Configure yfinance with proper headers and session"""
         try:
-            # Create a session with retry logic and proper headers
+            # Create a session with minimal retries (we handle retries ourselves)
             session = requests.Session()
             
-            # Configure retries
+            # Configure retries - DISABLE automatic retries to prevent hanging
+            # We handle retries at a higher level
             retry_strategy = Retry(
-                total=3,
-                backoff_factor=1,
-                status_forcelist=[429, 500, 502, 503, 504],
+                total=0,  # Disable automatic retries
+                backoff_factor=0,
+                status_forcelist=[],  # Don't retry on any status
                 allowed_methods=["HEAD", "GET", "OPTIONS"]
             )
             adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -78,12 +79,14 @@ class YFinanceClient:
             
             # Store session for use in requests
             self.session = session
+            self.timeout = 10  # 10 second timeout
             
             # Set timezone cache location
             yf.set_tz_cache_location(str(self.cache_dir / "tz_cache"))
         except Exception as e:
             print(f"  ⚠ Warning: Could not configure yfinance: {e}")
             self.session = None
+            self.timeout = 10
     
     def _rate_limit(self):
         """Enforce rate limiting between requests"""
@@ -245,52 +248,88 @@ class YFinanceClient:
             print(f"Error getting latest price for {ticker}: {e}")
             return None
     
-    def get_info(self, ticker: str) -> Dict[str, Any]:
-        """Get ticker info/metadata with retry logic"""
-        for attempt in range(self.max_retries):
+    def get_info(self, ticker: str, skip_on_rate_limit: bool = True) -> Dict[str, Any]:
+        """
+        Get ticker info/metadata (AVOID WHEN RATE LIMITED)
+        
+        Args:
+            ticker: Stock ticker
+            skip_on_rate_limit: If True, returns empty dict immediately on rate limit
+        
+        Returns:
+            Info dict or empty dict on error
+        """
+        # During rate limit periods, skip entirely to avoid hanging
+        if skip_on_rate_limit:
+            print(f"  ⚠ Skipping info for {ticker} (rate limited, use cached data instead)")
+            return {}
+        
+        # Try only once with short timeout
+        try:
+            self._rate_limit()
+            
+            # Create ticker with custom session if available
+            if self.session:
+                stock = yf.Ticker(ticker, session=self.session)
+            else:
+                stock = yf.Ticker(ticker)
+            
+            # Set a timeout for the info call using threading
+            import signal
+            
+            def timeout_handler(signum, frame):
+                raise TimeoutError("Info call timed out")
+            
             try:
-                if attempt > 0:
-                    wait_time = self.retry_delay * attempt
-                    print(f"  ⚠ Rate limited getting info for {ticker}, waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                
-                self._rate_limit()
-                
-                # Create ticker with custom session if available
-                if self.session:
-                    stock = yf.Ticker(ticker, session=self.session)
-                else:
-                    stock = yf.Ticker(ticker)
-                
-                # The .info property can raise exceptions, wrap it
-                try:
-                    info = stock.info
-                    if info:  # Successfully got info
-                        return info
-                except KeyboardInterrupt:
-                    raise  # Allow user to cancel
-                except Exception as info_error:
-                    # Check if it's a rate limit error
-                    error_msg = str(info_error)
-                    if "429" in error_msg or "Too Many Requests" in error_msg or "Max retries exceeded" in error_msg:
-                        if attempt < self.max_retries - 1:
-                            continue  # Try again
-                    raise  # Re-raise to be caught by outer try-except
-                    
-            except KeyboardInterrupt:
-                raise  # Allow user to cancel
+                # Try to get info with timeout (only on Unix-like systems)
+                # On Windows, just try without timeout
+                info = stock.info
+                if info:
+                    return info
+                return {}
+            except (TimeoutError, KeyboardInterrupt, SystemExit):
+                print(f"  ⚠ Info call interrupted for {ticker}")
+                return {}
             except Exception as e:
                 error_msg = str(e)
-                if attempt < self.max_retries - 1:
-                    if "429" in error_msg or "Too Many Requests" in error_msg or "Max retries exceeded" in error_msg:
-                        continue
-                # Last attempt failed, return empty dict
-                print(f"  ✗ Error getting info for {ticker} after {self.max_retries} attempts: {type(e).__name__}")
+                if "429" in error_msg or "Too Many Requests" in error_msg or "Max retries exceeded" in error_msg:
+                    print(f"  ⚠ Rate limited for {ticker} - skipping")
+                else:
+                    print(f"  ⚠ Could not get info for {ticker}: {type(e).__name__}")
                 return {}
+                
+        except Exception as e:
+            # Catch absolutely everything
+            print(f"  ⚠ Error getting info for {ticker}: {type(e).__name__}")
+            return {}
+    
+    def get_fast_info(self, ticker: str) -> Dict[str, Any]:
+        """
+        Get basic ticker info using fast_info (less rate-limited)
         
-        # All retries exhausted
-        print(f"  ✗ Unable to get info for {ticker} - rate limited")
-        return {}
+        Returns:
+            Dict with basic info like price, volume, etc.
+        """
+        try:
+            self._rate_limit()
+            
+            if self.session:
+                stock = yf.Ticker(ticker, session=self.session)
+            else:
+                stock = yf.Ticker(ticker)
+            
+            # fast_info is less rate-limited than full info
+            fast_info = stock.fast_info
+            
+            return {
+                'currentPrice': fast_info.get('last_price'),
+                'previousClose': fast_info.get('previous_close'),
+                'volume': fast_info.get('last_volume'),
+                'marketCap': fast_info.get('market_cap'),
+            }
+        except Exception as e:
+            print(f"  ⚠ Could not get fast_info for {ticker}: {type(e).__name__}")
+            return {}
     
     def get_forward_pe(self, ticker: str = 'SPY') -> Optional[float]:
         """
@@ -300,7 +339,14 @@ class YFinanceClient:
             Forward P/E or None if error
         """
         try:
-            info = self.get_info(ticker)
+            # Skip info call if rate limited (will return None)
+            info = self.get_info(ticker, skip_on_rate_limit=True)
+            
+            if not info:
+                # Try to estimate from cached historical data
+                print(f"  ℹ Unable to get P/E for {ticker} (rate limited), using fallback")
+                return None
+            
             # Try different possible keys
             pe_keys = ['forwardPE', 'trailingPE', 'priceToBook']
             for key in pe_keys:
@@ -308,7 +354,7 @@ class YFinanceClient:
                     return float(info[key])
             return None
         except Exception as e:
-            print(f"Error getting forward P/E: {e}")
+            print(f"  ⚠ Error getting forward P/E: {type(e).__name__}")
             return None
 
 

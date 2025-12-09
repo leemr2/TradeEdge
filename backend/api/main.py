@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from analytics.core.volatility_predictor import VolatilityPredictorV2
 from analytics.core.frs_calculator import FRSCalculator
 from analytics.core.cmds_calculator import CMDSCalculator
+from analytics.core.manual_inputs import update_manual_input, load_manual_inputs
 
 
 app = FastAPI(
@@ -217,6 +218,105 @@ async def get_cmds_history(days: int = 30):
         "message": "Historical data not yet implemented",
         "days_requested": days
     }
+
+
+class ManualInputUpdate(BaseModel):
+    """Model for updating manual inputs"""
+    hedge_fund_leverage: Optional[float] = None
+    cre_delinquency_rate: Optional[float] = None
+    as_of: Optional[str] = None  # ISO date string
+
+
+@app.post("/api/frs/manual-inputs")
+async def update_frs_manual_inputs(update: ManualInputUpdate):
+    """
+    Update manual input values for FRS calculation
+    
+    Args:
+        update: ManualInputUpdate model with values to update
+    
+    Returns:
+        Updated manual inputs dictionary
+    """
+    try:
+        updated_inputs = {}
+        
+        if update.hedge_fund_leverage is not None:
+            if not (0 <= update.hedge_fund_leverage <= 10):
+                raise HTTPException(
+                    status_code=400,
+                    detail="hedge_fund_leverage must be between 0 and 10"
+                )
+            updated_inputs = update_manual_input(
+                'hedge_fund_leverage',
+                update.hedge_fund_leverage,
+                update.as_of
+            )
+        
+        if update.cre_delinquency_rate is not None:
+            if not (0 <= update.cre_delinquency_rate <= 20):
+                raise HTTPException(
+                    status_code=400,
+                    detail="cre_delinquency_rate must be between 0 and 20"
+                )
+            updated_inputs = update_manual_input(
+                'cre_delinquency_rate',
+                update.cre_delinquency_rate,
+                update.as_of
+            )
+        
+        if not updated_inputs:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one field must be provided"
+            )
+        
+        # Clear FRS cache since inputs changed
+        if "frs" in response_cache:
+            del response_cache["frs"]
+        
+        return {
+            "status": "success",
+            "updated": updated_inputs,
+            "message": "Manual inputs updated successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating manual inputs: {str(e)}")
+
+
+@app.get("/api/frs/manual-inputs")
+async def get_frs_manual_inputs():
+    """
+    Get current manual input values
+    
+    Returns:
+        Dictionary with current manual input values and metadata
+    """
+    try:
+        inputs = load_manual_inputs()
+        
+        # Format response with metadata
+        response = {}
+        if 'hedge_fund_leverage' in inputs:
+            response['hedge_fund_leverage'] = {
+                'value': inputs['hedge_fund_leverage'],
+                'as_of': inputs.get('hedge_fund_leverage_as_of'),
+                'next_update': '2026-05-01 (Next Fed FSR)'
+            }
+        if 'cre_delinquency_rate' in inputs:
+            response['cre_delinquency_rate'] = {
+                'value': inputs['cre_delinquency_rate'],
+                'as_of': inputs.get('cre_delinquency_as_of'),
+                'next_update': '2026-02-15 (Next FDIC QBP)'
+            }
+        
+        return response
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading manual inputs: {str(e)}")
 
 
 if __name__ == "__main__":

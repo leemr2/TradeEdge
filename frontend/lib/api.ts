@@ -18,6 +18,39 @@ export interface VPResponse {
   prediction_window_days: string;
 }
 
+export interface ComponentScore {
+  name: string;
+  score: number;
+  value?: number | null;
+  last_updated?: string | null;
+  interpretation?: string;
+  data_source?: string;
+  is_manual?: boolean;
+  next_update?: string;
+}
+
+export interface CategoryMetadata {
+  name: string;
+  description: string;
+  update_frequency: string;
+  data_sources: string[];
+  next_update?: string;
+}
+
+export interface CategoryDetail {
+  score: number;
+  max: number;
+  min?: number;
+  components: Record<string, ComponentScore>;
+  metadata: CategoryMetadata;
+}
+
+export interface ManualInput {
+  value: number;
+  as_of?: string | null;
+  next_update?: string;
+}
+
 export interface FRSResponse {
   frs_score: number;
   correction_probability: number;
@@ -31,8 +64,20 @@ export interface FRSResponse {
   };
   zone: string;
   data_sources: string[];
-  manual_inputs: Record<string, any>;
-  component_details: Record<string, number>;
+  manual_inputs: Record<string, any>; // Backward compatibility
+  component_details: Record<string, number>; // Backward compatibility
+  // New detailed structure
+  categories?: {
+    macro_cycle: CategoryDetail;
+    valuation: CategoryDetail;
+    leverage_stability: CategoryDetail;
+    earnings_margins: CategoryDetail;
+    sentiment: CategoryDetail;
+  };
+  manual_inputs_structured?: {
+    hedge_fund_leverage?: ManualInput;
+    cre_delinquency_rate?: ManualInput;
+  };
 }
 
 export interface CMDSResponse {
@@ -73,6 +118,33 @@ export async function fetchFRS(): Promise<FRSResponse> {
 export async function fetchCMDS(frsWeight = 0.65, vpWeight = 0.35): Promise<CMDSResponse> {
   const res = await fetch(`${API_BASE_URL}/api/cmds?frs_weight=${frsWeight}&vp_weight=${vpWeight}`);
   if (!res.ok) throw new Error('Failed to fetch CMDS');
+  return res.json();
+}
+
+export interface ManualInputUpdate {
+  hedge_fund_leverage?: number;
+  cre_delinquency_rate?: number;
+  as_of?: string;
+}
+
+export async function updateManualInputs(update: ManualInputUpdate): Promise<{ status: string; updated: Record<string, any>; message: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/frs/manual-inputs`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(update),
+  });
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || 'Failed to update manual inputs');
+  }
+  return res.json();
+}
+
+export async function getManualInputs(): Promise<Record<string, ManualInput>> {
+  const res = await fetch(`${API_BASE_URL}/api/frs/manual-inputs`);
+  if (!res.ok) throw new Error('Failed to fetch manual inputs');
   return res.json();
 }
 
