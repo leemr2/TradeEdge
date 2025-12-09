@@ -15,12 +15,8 @@ warnings.filterwarnings('ignore')
 
 try:
     import yfinance as yf
-    import requests
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry
 except ImportError:
     yf = None
-    requests = None
 
 
 class YFinanceClient:
@@ -49,40 +45,17 @@ class YFinanceClient:
         self._configure_yfinance()
     
     def _configure_yfinance(self):
-        """Configure yfinance with proper headers and session"""
+        """Configure yfinance with proper settings"""
         try:
-            # Create a session with minimal retries (we handle retries ourselves)
-            session = requests.Session()
+            # Set timezone cache location
+            # Note: yfinance 0.2.66+ uses curl_cffi internally, so we don't set custom sessions
+            yf.set_tz_cache_location(str(self.cache_dir / "tz_cache"))
             
-            # Configure retries - DISABLE automatic retries to prevent hanging
-            # We handle retries at a higher level
-            retry_strategy = Retry(
-                total=0,  # Disable automatic retries
-                backoff_factor=0,
-                status_forcelist=[],  # Don't retry on any status
-                allowed_methods=["HEAD", "GET", "OPTIONS"]
-            )
-            adapter = HTTPAdapter(max_retries=retry_strategy)
-            session.mount("http://", adapter)
-            session.mount("https://", adapter)
-            
-            # Set realistic headers
-            session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'DNT': '1',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            })
-            
-            # Store session for use in requests
-            self.session = session
+            # Store timeout setting
             self.timeout = 10  # 10 second timeout
             
-            # Set timezone cache location
-            yf.set_tz_cache_location(str(self.cache_dir / "tz_cache"))
+            # Don't create custom session - let yfinance handle it with curl_cffi
+            self.session = None
         except Exception as e:
             print(f"  ⚠ Warning: Could not configure yfinance: {e}")
             self.session = None
@@ -171,11 +144,8 @@ class YFinanceClient:
                 # Rate limit the request
                 self._rate_limit()
                 
-                # Create ticker with custom session if available
-                if self.session:
-                    stock = yf.Ticker(ticker, session=self.session)
-                else:
-                    stock = yf.Ticker(ticker)
+                # Create ticker (let yfinance handle session internally)
+                stock = yf.Ticker(ticker)
                 
                 data = stock.history(period=period, interval=interval)
                 
@@ -268,21 +238,11 @@ class YFinanceClient:
         try:
             self._rate_limit()
             
-            # Create ticker with custom session if available
-            if self.session:
-                stock = yf.Ticker(ticker, session=self.session)
-            else:
-                stock = yf.Ticker(ticker)
-            
-            # Set a timeout for the info call using threading
-            import signal
-            
-            def timeout_handler(signum, frame):
-                raise TimeoutError("Info call timed out")
+            # Create ticker (let yfinance handle session internally)
+            stock = yf.Ticker(ticker)
             
             try:
-                # Try to get info with timeout (only on Unix-like systems)
-                # On Windows, just try without timeout
+                # Try to get info
                 info = stock.info
                 if info:
                     return info
@@ -313,10 +273,8 @@ class YFinanceClient:
         try:
             self._rate_limit()
             
-            if self.session:
-                stock = yf.Ticker(ticker, session=self.session)
-            else:
-                stock = yf.Ticker(ticker)
+            # Create ticker (let yfinance handle session internally)
+            stock = yf.Ticker(ticker)
             
             # fast_info is less rate-limited than full info
             fast_info = stock.fast_info
