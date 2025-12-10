@@ -21,6 +21,12 @@ except ImportError as e:
     print(f"Missing package: {e}")
     exit(1)
 
+# Import our fixed YFinanceClient
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from data_fetchers.yfinance_client import YFinanceClient
+
 
 class VolatilityPredictorV2:
     """
@@ -55,6 +61,9 @@ class VolatilityPredictorV2:
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         
+        # Initialize YFinanceClient for reliable data fetching
+        self.yfinance = YFinanceClient()
+        
         # Storage
         self.trends_data = None
         self.market_data = None
@@ -63,59 +72,143 @@ class VolatilityPredictorV2:
         self.model = None
         self.scaler = None
         
-    def fetch_google_trends(self, keywords, timeframe='today 5-y'):
-        """Fetch Google Trends data"""
+    def fetch_google_trends(self, keywords, timeframe='today 5-y', cache_path=None, ttl_hours=24):
+        """Fetch Google Trends data with caching and rate limiting"""
         print(f"Fetching Google Trends data for {len(keywords)} keywords...")
         
+        # Check cache first
+        if cache_path:
+            cache_file = Path(cache_path)
+            if cache_file.exists():
+                try:
+                    file_time = datetime.fromtimestamp(cache_file.stat().st_mtime)
+                    age = datetime.now() - file_time
+                    if age.total_seconds() / 3600 < ttl_hours:
+                        print(f"  ✓ Using cached Google Trends data")
+                        return pd.read_pickle(cache_file)
+                except Exception as e:
+                    print(f"  ⚠ Cache read error: {e}")
+        
         all_trends = pd.DataFrame()
+        import time
         
         for i in range(0, len(keywords), 5):
             batch = keywords[i:i+5]
             
-            try:
-                self.pytrends.build_payload(batch, timeframe=timeframe)
-                trends = self.pytrends.interest_over_time()
-                
-                if not trends.empty:
-                    trends = trends.drop('isPartial', axis=1, errors='ignore')
+            # Add delay between requests to avoid rate limiting
+            if i > 0:
+                delay = 5  # 5 seconds between batches
+                print(f"  ⏳ Waiting {delay}s to avoid rate limits...")
+                time.sleep(delay)
+            
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.pytrends.build_payload(batch, timeframe=timeframe)
+                    trends = self.pytrends.interest_over_time()
                     
-                    if all_trends.empty:
-                        all_trends = trends
-                    else:
-                        all_trends = all_trends.join(trends, how='outer')
+                    if not trends.empty:
+                        trends = trends.drop('isPartial', axis=1, errors='ignore')
                         
-                print(f"  ✓ Fetched batch {i//5 + 1}")
-                
+                        if all_trends.empty:
+                            all_trends = trends
+                        else:
+                            all_trends = all_trends.join(trends, how='outer')
+                            
+                    print(f"  ✓ Fetched batch {i//5 + 1}")
+                    break  # Success, exit retry loop
+                    
+                except Exception as e:
+                    if "429" in str(e) or "Too Many Requests" in str(e):
+                        if attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 10  # Exponential backoff: 10s, 20s, 30s
+                            print(f"  ⚠ Rate limited, waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                            time.sleep(wait_time)
+                        else:
+                            print(f"  ✗ Error after {max_retries} attempts: {e}")
+                    else:
+                        print(f"  ✗ Error: {e}")
+                        break  # Non-rate-limit error, don't retry
+        
+        # Save to cache
+        if cache_path and not all_trends.empty:
+            try:
+                cache_file = Path(cache_path)
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                all_trends.to_pickle(cache_file)
+                print(f"  ✓ Cached Google Trends data")
             except Exception as e:
-                print(f"  ✗ Error: {e}")
-                continue
+                print(f"  ⚠ Could not cache data: {e}")
         
         return all_trends
     
     def fetch_market_data(self, ticker='^GSPC', vix_ticker='^VIX', period='5y'):
-        """Fetch market data"""
+        """Fetch market data using YFinanceClient with proper error handling"""
         print(f"\nFetching market data...")
         
-        market = yf.download(ticker, period=period, progress=False)
-        vix = yf.download(vix_ticker, period=period, progress=False)
-        
-        market_data = pd.DataFrame()
-        market_data['close'] = market['Close']
-        market_data['volume'] = market['Volume']
-        market_data['vix'] = vix['Close']
-        market_data['returns'] = market_data['close'].pct_change()
-        market_data['realized_vol'] = market_data['returns'].rolling(20).std() * np.sqrt(252)
-        
-        print(f"  ✓ Fetched {len(market_data)} days")
-        
-        return market_data
+        try:
+            # Use our fixed YFinanceClient instead of direct yf.download
+            market = self.yfinance.fetch_ticker(ticker, period=period, ttl_hours=24)
+            vix = self.yfinance.fetch_ticker(vix_ticker, period=period, ttl_hours=24)
+            
+            if market.empty or vix.empty:
+                raise ValueError(f"No data returned for {ticker} or {vix_ticker}")
+            
+            market_data = pd.DataFrame()
+            market_data['close'] = market['Close']
+            market_data['volume'] = market['Volume']
+            market_data['vix'] = vix['Close']
+            market_data['returns'] = market_data['close'].pct_change()
+            market_data['realized_vol'] = market_data['returns'].rolling(20).std() * np.sqrt(252)
+            
+            # Remove timezone info from index to avoid issues
+            if hasattr(market_data.index, 'tz') and market_data.index.tz is not None:
+                market_data.index = market_data.index.tz_localize(None)
+            
+            print(f"  ✓ Fetched {len(market_data)} days")
+            
+            return market_data
+            
+        except Exception as e:
+            print(f"  ✗ Error fetching market data: {e}")
+            raise
     
-    def create_change_focused_features(self, trends_data):
+    def create_change_focused_features(self, trends_data, market_data=None):
         """
         KEY IMPROVEMENT: Focus on CHANGES and ACCELERATION
+        Fallback: Use market-only features if trends_data is None
         """
         print("\nCreating CHANGE-FOCUSED features...")
         
+        # If no trends data, use market-based features only
+        if trends_data is None or trends_data.empty:
+            if market_data is None:
+                raise ValueError("Need either trends_data or market_data")
+            
+            print("  Using market-only features (Google Trends unavailable)")
+            features = pd.DataFrame(index=market_data.index)
+            
+            # Market volatility features
+            features['vix_level'] = market_data['vix']
+            features['vix_roc_5d'] = market_data['vix'].pct_change(5)
+            features['vix_roc_10d'] = market_data['vix'].pct_change(10)
+            features['vix_acceleration'] = features['vix_roc_5d'].diff(5)
+            features['vix_zscore'] = (market_data['vix'] - market_data['vix'].rolling(90).mean()) / (market_data['vix'].rolling(90).std() + 1e-6)
+            
+            # Price momentum features
+            features['returns_5d'] = market_data['returns'].rolling(5).sum()
+            features['returns_10d'] = market_data['returns'].rolling(10).sum()
+            features['realized_vol'] = market_data['realized_vol']
+            features['vol_acceleration'] = market_data['realized_vol'].diff(5)
+            
+            # Volume features
+            features['volume_change'] = market_data['volume'].pct_change(5)
+            features['volume_zscore'] = (market_data['volume'] - market_data['volume'].rolling(90).mean()) / (market_data['volume'].rolling(90).std() + 1e-6)
+            
+            print(f"  ✓ Created {len(features.columns)} market-only features")
+            return features
+        
+        # Original trends-based features
         features = pd.DataFrame(index=trends_data.index)
         
         for keyword in trends_data.columns:
@@ -201,28 +294,53 @@ class VolatilityPredictorV2:
         print("PREPARING V2 TRAINING DATA (Change-Focused)")
         print("="*60)
         
-        # 1. Get data
-        all_keywords = self.fear_keywords + self.transition_keywords
-        self.trends_data = self.fetch_google_trends(all_keywords)
+        # 1. Get market data (always works with our fixed YFinanceClient)
         self.market_data = self.fetch_market_data()
         
+        # 2. Try to get Google Trends data with caching
+        all_keywords = self.fear_keywords + self.transition_keywords
+        trends_cache = self.model_dir / "google_trends_cache.pkl"
+        
+        try:
+            # Try with very long cache TTL (30 days) to avoid rate limits
+            self.trends_data = self.fetch_google_trends(all_keywords, cache_path=trends_cache, ttl_hours=720)
+            
+            if self.trends_data.empty:
+                print("  ⚠ Google Trends unavailable, using market-only features")
+                self.trends_data = None
+        except Exception as e:
+            print(f"  ⚠ Google Trends error: {e}, using market-only features")
+            self.trends_data = None
+        
         # 2. Normalize and align dates
-        print("\nAligning trends and market data...")
+        print("\nAligning market data...")
         
-        self.trends_data.index = pd.to_datetime(self.trends_data.index).normalize()
-        self.market_data.index = pd.to_datetime(self.market_data.index).normalize()
+        # Remove timezone info and normalize
+        # Convert to DatetimeIndex if needed, then ensure no timezone
+        if not isinstance(self.market_data.index, pd.DatetimeIndex):
+            self.market_data.index = pd.DatetimeIndex(self.market_data.index)
         
-        # Remove timezone info if present
-        if hasattr(self.market_data.index, 'tz') and self.market_data.index.tz is not None:
+        if self.market_data.index.tz is not None:
             self.market_data.index = self.market_data.index.tz_localize(None)
-        if hasattr(self.trends_data.index, 'tz') and self.trends_data.index.tz is not None:
-            self.trends_data.index = self.trends_data.index.tz_localize(None)
         
-        print(f"  Trends: {len(self.trends_data)} points from {self.trends_data.index.min()} to {self.trends_data.index.max()}")
+        self.market_data.index = self.market_data.index.normalize()
+        
         print(f"  Market: {len(self.market_data)} points from {self.market_data.index.min()} to {self.market_data.index.max()}")
         
+        # If no trends data, skip alignment
+        if self.trends_data is None:
+            print("  Using market-only mode (no trends data)")
+        else:
+            print("\nAligning trends and market data...")
+            self.trends_data.index = pd.to_datetime(self.trends_data.index).normalize()
+            
+            if hasattr(self.trends_data.index, 'tz') and self.trends_data.index.tz is not None:
+                self.trends_data.index = self.trends_data.index.tz_localize(None)
+            
+            print(f"  Trends: {len(self.trends_data)} points from {self.trends_data.index.min()} to {self.trends_data.index.max()}")
+        
         # Check if trends is weekly data
-        if len(self.trends_data) < 200:
+        if self.trends_data is not None and len(self.trends_data) < 200:
             print("  Detected weekly trends data - resampling market data to weekly...")
             
             market_weekly = self.market_data.resample('W-SUN').agg({
@@ -256,7 +374,7 @@ class VolatilityPredictorV2:
             self.market_data = merged[market_cols]
             
             print(f"  ✓ Aligned {len(merged)} weeks of data")
-        else:
+        elif self.trends_data is not None:
             # Daily data
             common_dates = self.trends_data.index.intersection(self.market_data.index)
             
@@ -291,8 +409,8 @@ class VolatilityPredictorV2:
                 self.market_data = self.market_data.loc[common_dates]
                 print(f"  ✓ Aligned {len(common_dates)} days")
         
-        # 3. Create CHANGE features
-        self.features = self.create_change_focused_features(self.trends_data)
+        # 3. Create CHANGE features (with or without trends data)
+        self.features = self.create_change_focused_features(self.trends_data, self.market_data)
         
         # 4. Create TRANSITION labels
         self.labels = self.create_regime_change_labels(self.market_data)
@@ -429,6 +547,73 @@ class VolatilityPredictorV2:
         print(f"✓ Model loaded from {model_path}")
         return True
     
+    def get_market_only_prediction(self) -> dict:
+        """
+        Fallback prediction using only market data (when Google Trends unavailable)
+        """
+        if self.market_data is None or len(self.market_data) == 0:
+            raise ValueError("No market data available")
+        
+        latest = self.market_data.iloc[-1]
+        vix = float(latest['vix']) if pd.notna(latest['vix']) else 20.0
+        realized_vol = float(latest['realized_vol']) * 100 if pd.notna(latest['realized_vol']) else 15.0  # Convert to %
+        
+        # Calculate VP score based on VIX and realized vol
+        # VIX scoring: 12=0pts, 20=40pts, 30=90pts, 35=100pts
+        if vix < 15:
+            vix_score = 0
+        elif vix < 20:
+            vix_score = (vix - 15) * 8  # 15-20 range = 0-40pts
+        elif vix < 30:
+            vix_score = 40 + (vix - 20) * 5  # 20-30 range = 40-90pts
+        else:
+            vix_score = min(100, 90 + (vix - 30) * 2)  # 30+ = 90-100pts
+        
+        # Realized vol scoring: < 15% = low, 15-25% = moderate, > 25% = high
+        if realized_vol < 15:
+            vol_score = 0
+        elif realized_vol < 25:
+            vol_score = (realized_vol - 15) * 6  # 15-25 range = 0-60pts
+        else:
+            vol_score = min(100, 60 + (realized_vol - 25) * 4)  # 25+ = 60-100pts
+        
+        # Calculate VIX momentum (is it rising?)
+        vix_5d_change = float(self.market_data['vix'].pct_change(5).iloc[-1]) if pd.notna(self.market_data['vix'].pct_change(5).iloc[-1]) else 0
+        if vix_5d_change > 0.3:  # 30% increase
+            momentum_score = 100
+        elif vix_5d_change > 0.1:  # 10-30% increase
+            momentum_score = (vix_5d_change - 0.1) * 500  # Scale to 0-100
+        elif vix_5d_change > -0.1:  # -10 to +10%
+            momentum_score = 0
+        else:  # Falling VIX = negative risk
+            momentum_score = 0
+        
+        # Weighted combination
+        vp_score = int(0.5 * vix_score + 0.3 * vol_score + 0.2 * momentum_score)
+        
+        # Confidence based on how extreme the values are
+        confidence = int(min(100, max(20, abs(vp_score - 50) * 2)))
+        
+        return {
+            "vp_score": vp_score,
+            "confidence": confidence,
+            "spike_probability": vp_score / 100.0,
+            "signal_strength": vp_score,
+            "last_updated": datetime.now().isoformat(),
+            "components": {
+                "vix_level": int(vix_score),
+                "realized_vol": int(vol_score),
+                "momentum": int(momentum_score)
+            },
+            "current_values": {
+                "vix": round(vix, 2),
+                "realized_vol_pct": round(realized_vol, 2),
+                "vix_5d_change_pct": round(vix_5d_change * 100, 2)
+            },
+            "prediction_window_days": "2-5",
+            "mode": "market-only-fallback"
+        }
+    
     def get_current_prediction(self) -> dict:
         """
         Get current volatility prediction as JSON
@@ -444,12 +629,29 @@ class VolatilityPredictorV2:
         if self.features is None or len(self.features) == 0:
             raise ValueError("Features not prepared. Run prepare_training_data() first")
         
+        # Check if features match model expectations
+        if self.features.shape[1] != self.scaler.n_features_in_:
+            print(f"  ⚠ Feature mismatch: got {self.features.shape[1]} features, model expects {self.scaler.n_features_in_}")
+            print(f"  Using market-only fallback prediction")
+            return self.get_market_only_prediction()
+        
         # Get latest features
         latest_features = self.features.iloc[-1:].values
         latest_features_scaled = self.scaler.transform(latest_features)
         
         # Get prediction probability
-        probability = self.model.predict_proba(latest_features_scaled)[0, 1]
+        try:
+            proba = self.model.predict_proba(latest_features_scaled)[0]
+            # Check if model learned both classes
+            if len(proba) > 1:
+                probability = proba[1]
+            else:
+                # Only one class learned (no volatility spikes in training data)
+                print(f"  ⚠ Model only learned one class, using market-only fallback")
+                return self.get_market_only_prediction()
+        except Exception as e:
+            print(f"  ⚠ Prediction error: {e}, using market-only fallback")
+            return self.get_market_only_prediction()
         
         # Calculate VP score (0-100)
         vp_score = int(probability * 100)

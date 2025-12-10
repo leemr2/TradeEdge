@@ -40,17 +40,17 @@ class ValuationCategory(BaseCategory):
         10 points: Dot-com/2021 levels (22x+)
         """
         try:
-            # Try to get P/E (will skip if rate limited)
-            forward_pe = self.yfinance.get_forward_pe('SPY')
+            # Try to get P/E (with historical estimate fallback)
+            forward_pe = self.yfinance.get_forward_pe('SPY', use_historical_estimate=True)
             
             if forward_pe is None:
-                print(f"  ℹ P/E not available (rate limited), using default score")
+                print(f"  ℹ P/E not available, using default moderate risk score")
                 return {
                     'name': 'forward_pe',
                     'score': 5.0,
                     'value': None,
                     'last_updated': datetime.now().isoformat(),
-                    'interpretation': 'Rate limited - using default moderate risk score',
+                    'interpretation': 'Data unavailable - using default moderate risk score',
                     'data_source': 'Yahoo Finance: ^GSPC'
                 }
             
@@ -148,16 +148,16 @@ class ValuationCategory(BaseCategory):
         10 points: Equity yield < T-bill yield
         """
         try:
-            # Get forward P/E to calculate earnings yield (will skip if rate limited)
-            forward_pe = self.yfinance.get_forward_pe('SPY')
+            # Get forward P/E to calculate earnings yield (with historical estimate fallback)
+            forward_pe = self.yfinance.get_forward_pe('SPY', use_historical_estimate=True)
             if forward_pe is None or forward_pe <= 0:
-                print(f"  ℹ Equity yield not available (rate limited), skipping")
+                print(f"  ℹ Equity yield not available, using default score")
                 return {
                     'name': 'equity_yield',
-                    'score': 0.0,
+                    'score': 5.0,
                     'value': None,
-                    'last_updated': None,
-                    'interpretation': 'Rate limited - skipping',
+                    'last_updated': datetime.now().isoformat(),
+                    'interpretation': 'Data unavailable - using default moderate risk score',
                     'data_source': 'Yahoo Finance + FRED: DTB3'
                 }
             

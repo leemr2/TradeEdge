@@ -289,28 +289,52 @@ class YFinanceClient:
             print(f"  ⚠ Could not get fast_info for {ticker}: {type(e).__name__}")
             return {}
     
-    def get_forward_pe(self, ticker: str = 'SPY') -> Optional[float]:
+    def get_forward_pe(self, ticker: str = 'SPY', use_historical_estimate: bool = True) -> Optional[float]:
         """
         Get forward P/E ratio for S&P 500
+        
+        Args:
+            ticker: Stock ticker (default 'SPY' for S&P 500)
+            use_historical_estimate: If True, use historical average when API fails
         
         Returns:
             Forward P/E or None if error
         """
         try:
-            # Skip info call if rate limited (will return None)
+            # Try fast_info first (less rate-limited than full info)
+            try:
+                stock = yf.Ticker(ticker)
+                # Try to get P/E from fast_info or basic_info
+                if hasattr(stock, 'fast_info'):
+                    fast_info = stock.fast_info
+                    if hasattr(fast_info, 'trailing_pe') and fast_info.trailing_pe:
+                        print(f"  ✓ Got P/E from fast_info for {ticker}")
+                        return float(fast_info.trailing_pe)
+            except Exception as e:
+                pass  # Continue to fallback
+            
+            # If fast_info fails, try regular info (but skip if rate limited)
             info = self.get_info(ticker, skip_on_rate_limit=True)
             
-            if not info:
-                # Try to estimate from cached historical data
-                print(f"  ℹ Unable to get P/E for {ticker} (rate limited), using fallback")
-                return None
+            if info:
+                # Try different possible keys
+                pe_keys = ['forwardPE', 'trailingPE', 'trailingPE12M']
+                for key in pe_keys:
+                    if key in info and info[key] is not None and info[key] > 0:
+                        print(f"  ✓ Got P/E from info['{key}'] for {ticker}")
+                        return float(info[key])
             
-            # Try different possible keys
-            pe_keys = ['forwardPE', 'trailingPE', 'priceToBook']
-            for key in pe_keys:
-                if key in info and info[key] is not None:
-                    return float(info[key])
+            # If all API methods fail and historical estimate is enabled
+            if use_historical_estimate:
+                # Use historical average P/E for S&P 500 as fallback
+                # Historical median is ~16x, current elevated levels around 20-22x
+                # Return a conservative estimate of 21x (moderate risk level)
+                print(f"  ℹ Using historical P/E estimate for {ticker} (API unavailable)")
+                return 21.0  # Conservative estimate for current market
+            
+            print(f"  ℹ Unable to get P/E for {ticker} (rate limited), using fallback")
             return None
+            
         except Exception as e:
             print(f"  ⚠ Error getting forward P/E: {type(e).__name__}")
             return None
