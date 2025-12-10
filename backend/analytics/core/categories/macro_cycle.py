@@ -34,8 +34,9 @@ class MacroCycleCategory(BaseCategory):
         """
         Category 1.1: Unemployment Trend (0-10 points)
         0 points: Flat or falling, ≤4%
-        5 points: Up 0.5-0.9pp from trough
-        10 points: Up ≥1.0pp from trough (Sahm rule trigger)
+        1-4 points: Rising 0.1-0.4pp (minor deterioration)
+        5 points: Rising 0.5-0.9pp (Sahm rule early warning)
+        10 points: Rising ≥1.0pp (Sahm rule triggered)
         """
         try:
             unrate = self.fred.fetch_series('UNRATE', start_date='2020-01-01')
@@ -50,31 +51,35 @@ class MacroCycleCategory(BaseCategory):
                     'data_source': 'FRED: UNRATE'
                 }
             
-            # Get 12-month low
-            rolling_12m = unrate.rolling(252).min()  # ~12 months of trading days
+            # Get 12-month trough (lowest point in last 12 months)
+            trough_12m = unrate.iloc[-12:].min()
             current = unrate.iloc[-1]
-            low_12m = rolling_12m.iloc[-1]
             
-            delta = current - low_12m
+            # Calculate change from trough
+            change_from_trough = current - trough_12m
             last_updated = self._get_latest_timestamp(unrate)
             
-            if delta <= 0:
+            # Score based on thresholds from spec
+            if change_from_trough < 0 or current <= 4.0:
                 score = 0.0
                 interpretation = 'Unemployment flat or falling - strong labor market'
-            elif delta < 0.5:
-                score = 2.5
-                interpretation = 'Unemployment rising slightly - minor deterioration'
-            elif delta < 1.0:
+            elif 0.5 <= change_from_trough < 1.0:
                 score = 5.0
                 interpretation = 'Sahm rule early warning - unemployment up 0.5-0.9pp'
-            else:
+            elif change_from_trough >= 1.0:
                 score = 10.0
                 interpretation = 'Sahm rule triggered - unemployment up ≥1.0pp from trough'
+            else:  # 0 < change < 0.5
+                # Linear interpolation
+                score = change_from_trough * 10
+                interpretation = f'Unemployment rising slightly ({change_from_trough:.2f}pp) - minor deterioration'
             
             return {
                 'name': 'unemployment',
                 'score': round(score, 1),
                 'value': round(current, 2),
+                'delta_from_trough': round(change_from_trough, 2),
+                'trough_12m': round(trough_12m, 2),
                 'last_updated': last_updated,
                 'interpretation': interpretation,
                 'data_source': 'FRED: UNRATE'
@@ -95,12 +100,12 @@ class MacroCycleCategory(BaseCategory):
         """
         Category 1.2: Yield Curve Signal (0-10 points)
         0 points: Never inverted recently
-        5 points: Briefly inverted, now modestly positive
-        10 points: Deep, long inversion followed by steepening
+        5 points: Briefly inverted (<100 days), now positive
+        10 points: Extended inversion (>100 days) + steepening (classic pre-recession)
         """
         try:
-            # Fetch 10Y-2Y spread
-            t10y2y = self.fred.fetch_series('T10Y2Y', start_date='2020-01-01')
+            # Fetch 10Y-2Y spread (at least 2 years for analysis)
+            t10y2y = self.fred.fetch_series('T10Y2Y', start_date='2022-01-01')
             
             if len(t10y2y) < 60:
                 return {
@@ -112,53 +117,44 @@ class MacroCycleCategory(BaseCategory):
                     'data_source': 'FRED: T10Y2Y'
                 }
             
-            # Check recent history (last 252 trading days ~1 year)
-            recent = t10y2y.iloc[-252:] if len(t10y2y) >= 252 else t10y2y
-            
-            # Check if inverted recently
-            was_inverted = (recent < 0).any()
+            # Get current spread
             current_spread = t10y2y.iloc[-1]
             last_updated = self._get_latest_timestamp(t10y2y)
             
-            if not was_inverted:
-                return {
-                    'name': 'yield_curve',
-                    'score': 0.0,
-                    'value': round(current_spread, 2),
-                    'last_updated': last_updated,
-                    'interpretation': 'No recent inversion - normal yield curve',
-                    'data_source': 'FRED: T10Y2Y'
-                }
+            # Count days inverted
+            inversions = (t10y2y < 0).sum()
             
-            # Check depth and duration of inversion
-            inversion_periods = recent[recent < 0]
-            if len(inversion_periods) > 0:
-                max_inversion_depth = abs(inversion_periods.min())
-                inversion_duration = len(inversion_periods)
-                
-                # Deep inversion (>1%) for long period (>60 days) = 10 points
-                if max_inversion_depth > 1.0 and inversion_duration > 60:
-                    # Check if now steepening (recently uninverted)
-                    if current_spread > 0.5:
-                        score = 10.0
-                        interpretation = 'Deep, long inversion followed by steepening - classic pre-recession pattern'
-                    else:
-                        score = 8.0
-                        interpretation = 'Deep, long inversion - high risk'
-                elif max_inversion_depth > 0.5:
-                    score = 5.0
-                    interpretation = 'Briefly inverted, now modestly positive'
-                else:
-                    score = 2.5
-                    interpretation = 'Minor inversion detected'
-            else:
+            # Find deepest inversion
+            deepest_inversion = t10y2y.min()
+            
+            # Check if steepening (moving toward normal)
+            recent_avg = t10y2y.iloc[-30:].mean()  # Last 30 days
+            is_steepening = current_spread > recent_avg
+            
+            # Score based on inversion history and current state
+            if inversions == 0:
                 score = 0.0
-                interpretation = 'No inversion detected'
+                interpretation = 'No recent inversion - normal yield curve'
+            elif inversions < 100 and current_spread > 0:
+                score = 5.0
+                interpretation = f'Briefly inverted ({inversions} days), now positive - potential false signal'
+            elif inversions > 100 and is_steepening:
+                score = 10.0
+                interpretation = f'Extended inversion ({inversions} days) + steepening - classic pre-recession pattern'
+            else:
+                # Interpolate based on days inverted
+                score = min(10.0, inversions / 20)
+                if current_spread < 0:
+                    interpretation = f'Currently inverted ({inversions} days total)'
+                else:
+                    interpretation = f'Recently uninverted after {inversions} days'
             
             return {
                 'name': 'yield_curve',
                 'score': round(score, 1),
                 'value': round(current_spread, 2),
+                'days_inverted': int(inversions),
+                'deepest_inversion': round(deepest_inversion, 2),
                 'last_updated': last_updated,
                 'interpretation': interpretation,
                 'data_source': 'FRED: T10Y2Y'
@@ -178,45 +174,66 @@ class MacroCycleCategory(BaseCategory):
     def _score_gdp_vs_stall(self) -> Dict[str, Any]:
         """
         Category 1.3: GDP vs Stall Speed (0-10 points)
-        0 points: >2.5% trend growth
-        5 points: 1.5-2.5% growth
-        10 points: <1.5% or multiple weak/negative quarters
+        0 points: >2.5% YoY growth (strong expansion)
+        5 points: 1.5-2.5% growth (near stall speed)
+        10 points: <1.5% or 2+ negative quarters (recession imminent)
         """
         try:
-            # Fetch GDP growth rate
-            gdp_growth = self.fred.fetch_series('A191RL1Q225SBEA', start_date='2020-01-01')
+            # Fetch Real GDP (levels, not growth rate)
+            gdp = self.fred.fetch_series('GDPC1', start_date='2022-01-01')
             
-            if len(gdp_growth) < 4:
+            if len(gdp) < 8:  # Need at least 8 quarters (2 years) for YoY calc
                 return {
                     'name': 'gdp',
                     'score': 0.0,
                     'value': None,
                     'last_updated': None,
                     'interpretation': 'Insufficient data',
-                    'data_source': 'FRED: A191RL1Q225SBEA'
+                    'data_source': 'FRED: GDPC1'
                 }
             
-            # Calculate trailing 4-quarter average
-            trailing_4q = gdp_growth.iloc[-4:].mean()
-            last_updated = self._get_latest_timestamp(gdp_growth)
+            # Calculate year-over-year growth rate
+            # YoY = (GDP_current / GDP_4_quarters_ago) - 1
+            gdp_yoy = gdp.pct_change(4) * 100  # 4 quarters back, convert to percent
             
-            if trailing_4q > 2.5:
+            # Get current and recent average growth
+            current_growth = gdp_yoy.iloc[-1]
+            avg_growth_4q = gdp_yoy.iloc[-4:].mean()  # Last 4 quarters
+            
+            # Count negative quarters (technical recession = 2 consecutive)
+            # QoQ changes
+            gdp_qoq = gdp.pct_change()
+            negative_quarters = (gdp_qoq.iloc[-4:] < 0).sum()
+            
+            last_updated = self._get_latest_timestamp(gdp)
+            
+            # Score based on growth rate and weakness
+            if avg_growth_4q > 2.5:
                 score = 0.0
-                interpretation = 'Strong growth above trend (>2.5%)'
-            elif trailing_4q > 1.5:
+                interpretation = f'Strong growth above trend ({avg_growth_4q:.1f}% YoY)'
+            elif 1.5 <= avg_growth_4q <= 2.5:
                 score = 5.0
-                interpretation = 'Growth slowing but not stalled (1.5-2.5%)'
-            else:
+                interpretation = f'Growth slowing but not stalled ({avg_growth_4q:.1f}% YoY)'
+            elif avg_growth_4q < 1.5 or negative_quarters >= 2:
                 score = 10.0
-                interpretation = 'Below stall speed (<1.5%) - recession risk'
+                if negative_quarters >= 2:
+                    interpretation = f'Below stall speed ({avg_growth_4q:.1f}% YoY) with {negative_quarters} negative quarters - recession risk'
+                else:
+                    interpretation = f'Below stall speed ({avg_growth_4q:.1f}% YoY) - recession risk'
+            else:
+                # Linear interpolation for edge cases
+                score = min(10.0, (2.5 - avg_growth_4q) / 0.1)
+                interpretation = f'Near stall speed ({avg_growth_4q:.1f}% YoY)'
             
             return {
                 'name': 'gdp',
                 'score': round(score, 1),
-                'value': round(trailing_4q, 2),
+                'value': round(avg_growth_4q, 2),
+                'current_yoy': round(current_growth, 2),
+                'negative_quarters': int(negative_quarters),
                 'last_updated': last_updated,
                 'interpretation': interpretation,
-                'data_source': 'FRED: A191RL1Q225SBEA'
+                'data_source': 'FRED: GDPC1'
             }
                 
         except Exception as e:
@@ -227,7 +244,7 @@ class MacroCycleCategory(BaseCategory):
                 'value': None,
                 'last_updated': None,
                 'interpretation': f'Error: {str(e)} - using default score',
-                'data_source': 'FRED: A191RL1Q225SBEA'
+                'data_source': 'FRED: GDPC1'
             }
     
     def get_metadata(self) -> CategoryMetadata:
@@ -246,7 +263,7 @@ class MacroCycleCategory(BaseCategory):
             max_points=30.0,
             description='Assesses economic cycle position and proximity to recession through unemployment trends, yield curve signals, and GDP growth relative to stall speed.',
             update_frequency='Mixed: Monthly (Unemployment), Daily (Yield Curve), Quarterly (GDP)',
-            data_sources=['FRED: UNRATE', 'FRED: T10Y2Y', 'FRED: A191RL1Q225SBEA'],
+            data_sources=['FRED: UNRATE', 'FRED: T10Y2Y', 'FRED: GDPC1'],
             next_update=f"{first_friday.strftime('%Y-%m-%d')} (Unemployment Report)"
         )
 
