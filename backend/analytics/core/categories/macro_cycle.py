@@ -32,57 +32,73 @@ class MacroCycleCategory(BaseCategory):
     
     def _score_unemployment_trend(self) -> Dict[str, Any]:
         """
-        Category 1.1: Unemployment Trend (0-10 points)
-        0 points: Flat or falling, ≤4%
-        1-4 points: Rising 0.1-0.4pp (minor deterioration)
-        5 points: Rising 0.5-0.9pp (Sahm rule early warning)
-        10 points: Rising ≥1.0pp (Sahm rule triggered)
+        Category 1.1: Unemployment Trend (0-10 points) - Official Sahm Rule
+        
+        Sahm Rule: Recession signal when 3-month MA of unemployment rate
+        rises ≥0.5pp above its lowest level in prior 12 months.
+        
+        Scoring:
+        0 points: Sahm indicator <0 or unemployment ≤4%
+        1-4 points: Sahm indicator 0.1-0.4pp (minor deterioration)
+        5 points: Sahm indicator 0.5-0.9pp (Sahm rule early warning)
+        10 points: Sahm indicator ≥1.0pp (Sahm rule triggered - recession signal)
         """
         try:
-            unrate = self.fred.fetch_series('UNRATE', start_date='2020-01-01')
+            # Fetch at least 18 months of data to ensure complete 12-month lookback
+            # with 3-month MA (need 2 extra months for MA calculation)
+            unrate = self.fred.fetch_series('UNRATE', start_date='2023-01-01')
             
-            if len(unrate) < 12:
+            if len(unrate) < 15:
                 return {
                     'name': 'unemployment',
                     'score': 0.0,
                     'value': None,
                     'last_updated': None,
-                    'interpretation': 'Insufficient data',
+                    'interpretation': 'Insufficient data (need 15+ months)',
                     'data_source': 'FRED: UNRATE'
                 }
             
-            # Get 12-month trough (lowest point in last 12 months)
-            trough_12m = unrate.iloc[-12:].min()
-            current = unrate.iloc[-1]
+            # Calculate 3-month moving average (official Sahm Rule methodology)
+            unrate_3m_ma = unrate.rolling(window=3).mean()
             
-            # Calculate change from trough
-            change_from_trough = current - trough_12m
+            # Get current 3-month MA
+            current_ma = unrate_3m_ma.iloc[-1]
+            
+            # Find minimum 3-month MA in prior 12 months
+            trough_12m = unrate_3m_ma.iloc[-12:].min()
+            
+            # Calculate Sahm indicator (the key metric)
+            sahm_indicator = current_ma - trough_12m
+            
+            # Get current actual unemployment rate (not MA)
+            current = unrate.iloc[-1]
             last_updated = self._get_latest_timestamp(unrate)
             
-            # Score based on thresholds from spec
-            if change_from_trough < 0 or current <= 4.0:
+            # Score based on Sahm indicator thresholds
+            if sahm_indicator < 0 or current <= 4.0:
                 score = 0.0
                 interpretation = 'Unemployment flat or falling - strong labor market'
-            elif 0.5 <= change_from_trough < 1.0:
+            elif 0.5 <= sahm_indicator < 1.0:
                 score = 5.0
-                interpretation = 'Sahm rule early warning - unemployment up 0.5-0.9pp'
-            elif change_from_trough >= 1.0:
+                interpretation = f'Sahm rule early warning - indicator at {sahm_indicator:.2f}pp (0.5-0.9pp range)'
+            elif sahm_indicator >= 1.0:
                 score = 10.0
-                interpretation = 'Sahm rule triggered - unemployment up ≥1.0pp from trough'
-            else:  # 0 < change < 0.5
-                # Linear interpolation
-                score = change_from_trough * 10
-                interpretation = f'Unemployment rising slightly ({change_from_trough:.2f}pp) - minor deterioration'
+                interpretation = f'Sahm rule TRIGGERED - indicator at {sahm_indicator:.2f}pp (≥1.0pp) - recession signal'
+            else:  # 0 < sahm_indicator < 0.5
+                # Linear interpolation between 0 and 5 points
+                score = sahm_indicator * 10
+                interpretation = f'Unemployment rising slightly - Sahm indicator at {sahm_indicator:.2f}pp'
             
             return {
                 'name': 'unemployment',
                 'score': round(score, 1),
-                'value': round(current, 2),
-                'delta_from_trough': round(change_from_trough, 2),
-                'trough_12m': round(trough_12m, 2),
+                'value': round(current, 2),  # Current month unemployment rate
+                'sahm_indicator': round(sahm_indicator, 2),  # Key metric
+                'ma_3month': round(current_ma, 2),  # Current 3-month MA
+                'trough_12m': round(trough_12m, 2),  # 12-month trough of 3-month MA
                 'last_updated': last_updated,
                 'interpretation': interpretation,
-                'data_source': 'FRED: UNRATE'
+                'data_source': 'FRED: UNRATE (Official Sahm Rule - 3-month MA)'
             }
                 
         except Exception as e:
