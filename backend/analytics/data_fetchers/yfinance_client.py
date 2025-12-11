@@ -218,20 +218,19 @@ class YFinanceClient:
             print(f"Error getting latest price for {ticker}: {e}")
             return None
     
-    def get_info(self, ticker: str, skip_on_rate_limit: bool = True) -> Dict[str, Any]:
+    def get_info(self, ticker: str, skip_on_rate_limit: bool = False) -> Dict[str, Any]:
         """
-        Get ticker info/metadata (AVOID WHEN RATE LIMITED)
+        Get ticker info/metadata (with timeout protection)
         
         Args:
             ticker: Stock ticker
-            skip_on_rate_limit: If True, returns empty dict immediately on rate limit
+            skip_on_rate_limit: If True, returns empty dict immediately without trying
         
         Returns:
             Info dict or empty dict on error
         """
-        # During rate limit periods, skip entirely to avoid hanging
+        # If explicitly told to skip, skip
         if skip_on_rate_limit:
-            print(f"  ⚠ Skipping info for {ticker} (rate limited, use cached data instead)")
             return {}
         
         # Try only once with short timeout
@@ -303,6 +302,7 @@ class YFinanceClient:
         try:
             # Try fast_info first (less rate-limited than full info)
             try:
+                self._rate_limit()
                 stock = yf.Ticker(ticker)
                 # Try to get P/E from fast_info or basic_info
                 if hasattr(stock, 'fast_info'):
@@ -313,8 +313,8 @@ class YFinanceClient:
             except Exception as e:
                 pass  # Continue to fallback
             
-            # If fast_info fails, try regular info (but skip if rate limited)
-            info = self.get_info(ticker, skip_on_rate_limit=True)
+            # If fast_info fails, try regular info (don't skip by default)
+            info = self.get_info(ticker, skip_on_rate_limit=False)
             
             if info:
                 # Try different possible keys
@@ -332,7 +332,7 @@ class YFinanceClient:
                 print(f"  ℹ Using historical P/E estimate for {ticker} (API unavailable)")
                 return 21.0  # Conservative estimate for current market
             
-            print(f"  ℹ Unable to get P/E for {ticker} (rate limited), using fallback")
+            print(f"  ℹ Unable to get P/E for {ticker}, using fallback")
             return None
             
         except Exception as e:
