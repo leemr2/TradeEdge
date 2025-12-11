@@ -28,7 +28,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from analytics.core.volatility_predictor import VolatilityPredictorV2
 from analytics.core.frs_calculator import FRSCalculator
 from analytics.core.cmds_calculator import CMDSCalculator
-from analytics.core.manual_inputs import update_manual_input, load_manual_inputs
+from analytics.core.manual_inputs import (
+    update_manual_input, 
+    load_manual_inputs,
+    save_manual_inputs,
+    get_field_metadata,
+    get_category_groups
+)
 
 
 app = FastAPI(
@@ -221,64 +227,85 @@ async def get_cmds_history(days: int = 30):
 
 
 class ManualInputUpdate(BaseModel):
-    """Model for updating manual inputs"""
-    hedge_fund_leverage: Optional[float] = None
-    cre_delinquency_rate: Optional[float] = None
-    as_of: Optional[str] = None  # ISO date string
+    """Model for batch updating manual inputs - accepts any field dynamically"""
+    class Config:
+        extra = 'allow'  # Allow any fields
 
 
 @app.post("/api/frs/manual-inputs")
-async def update_frs_manual_inputs(update: ManualInputUpdate):
+async def update_frs_manual_inputs(updates: Dict[str, Any]):
     """
     Update manual input values for FRS calculation
     
+    Accepts any manual input field dynamically with validation based on field metadata
+    
     Args:
-        update: ManualInputUpdate model with values to update
+        updates: Dictionary with field names and values to update
     
     Returns:
         Updated manual inputs dictionary
     """
     try:
-        updated_inputs = {}
-        
-        if update.hedge_fund_leverage is not None:
-            if not (0 <= update.hedge_fund_leverage <= 10):
-                raise HTTPException(
-                    status_code=400,
-                    detail="hedge_fund_leverage must be between 0 and 10"
-                )
-            updated_inputs = update_manual_input(
-                'hedge_fund_leverage',
-                update.hedge_fund_leverage,
-                update.as_of
-            )
-        
-        if update.cre_delinquency_rate is not None:
-            if not (0 <= update.cre_delinquency_rate <= 20):
-                raise HTTPException(
-                    status_code=400,
-                    detail="cre_delinquency_rate must be between 0 and 20"
-                )
-            updated_inputs = update_manual_input(
-                'cre_delinquency_rate',
-                update.cre_delinquency_rate,
-                update.as_of
-            )
-        
-        if not updated_inputs:
+        if not updates:
             raise HTTPException(
                 status_code=400,
                 detail="At least one field must be provided"
             )
         
-        # Clear FRS cache since inputs changed
-        if "frs" in response_cache:
-            del response_cache["frs"]
+        # Load current inputs and metadata
+        current_inputs = load_manual_inputs()
+        metadata = get_field_metadata()
+        
+        # Validate and update each field
+        updated_fields = []
+        for key, value in updates.items():
+            # Skip _as_of fields - they'll be handled separately
+            if key.endswith('_as_of') or key in ['last_full_update', 'version']:
+                current_inputs[key] = value
+                continue
+            
+            # Validate field exists in metadata
+            if key not in metadata and key not in ['as_of']:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown field: {key}"
+                )
+            
+            # Validate value range if metadata available
+            if key in metadata:
+                field_meta = metadata[key]
+                if 'min' in field_meta and 'max' in field_meta:
+                    if not (field_meta['min'] <= value <= field_meta['max']):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{key} must be between {field_meta['min']} and {field_meta['max']}"
+                        )
+            
+            # Update the field
+            current_inputs[key] = value
+            updated_fields.append(key)
+            
+            # Update as_of date for this field if provided
+            as_of_key = f'{key}_as_of'
+            if 'as_of' in updates:
+                current_inputs[as_of_key] = updates['as_of']
+            elif as_of_key not in current_inputs:
+                current_inputs[as_of_key] = datetime.now().isoformat()
+        
+        # Update timestamp
+        current_inputs['last_full_update'] = datetime.now().isoformat()
+        
+        # Save all changes
+        save_manual_inputs(current_inputs)
+        
+        # Clear all caches since inputs changed
+        response_cache.clear()
         
         return {
             "status": "success",
-            "updated": updated_inputs,
-            "message": "Manual inputs updated successfully"
+            "updated_fields": updated_fields,
+            "values": current_inputs,
+            "message": f"Successfully updated {len(updated_fields)} field(s)"
         }
         
     except HTTPException:
@@ -290,33 +317,50 @@ async def update_frs_manual_inputs(update: ManualInputUpdate):
 @app.get("/api/frs/manual-inputs")
 async def get_frs_manual_inputs():
     """
-    Get current manual input values
+    Get all current manual input values with metadata
     
     Returns:
-        Dictionary with current manual input values and metadata
+        Dictionary with current manual input values and complete metadata
     """
     try:
         inputs = load_manual_inputs()
+        metadata = get_field_metadata()
+        category_groups = get_category_groups()
         
-        # Format response with metadata
-        response = {}
-        if 'hedge_fund_leverage' in inputs:
-            response['hedge_fund_leverage'] = {
-                'value': inputs['hedge_fund_leverage'],
-                'as_of': inputs.get('hedge_fund_leverage_as_of'),
-                'next_update': '2026-05-01 (Next Fed FSR)'
-            }
-        if 'cre_delinquency_rate' in inputs:
-            response['cre_delinquency_rate'] = {
-                'value': inputs['cre_delinquency_rate'],
-                'as_of': inputs.get('cre_delinquency_as_of'),
-                'next_update': '2026-02-15 (Next FDIC QBP)'
-            }
+        # Format response with enhanced structure
+        response = {
+            'values': inputs,
+            'metadata': metadata,
+            'categories': category_groups,
+            'last_updated': inputs.get('last_full_update'),
+            'version': inputs.get('version', '1.0')
+        }
         
         return response
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading manual inputs: {str(e)}")
+
+
+@app.get("/api/frs/manual-inputs/metadata")
+async def get_manual_inputs_metadata():
+    """
+    Get comprehensive metadata for all manual input fields
+    
+    Returns:
+        Field metadata including descriptions, ranges, instructions, data sources
+    """
+    try:
+        metadata = get_field_metadata()
+        categories = get_category_groups()
+        
+        return {
+            'fields': metadata,
+            'categories': categories
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading metadata: {str(e)}")
 
 
 if __name__ == "__main__":

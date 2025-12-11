@@ -51,6 +51,28 @@ export interface ManualInput {
   next_update?: string;
 }
 
+export interface FieldMetadata {
+  label: string;
+  description: string;
+  category: string;
+  min?: number;
+  max?: number;
+  unit?: string;
+  type?: string;
+  data_source: string;
+  frequency: string;
+  instructions: string;
+  url?: string;
+}
+
+export interface ManualInputsResponse {
+  values: Record<string, any>;
+  metadata: Record<string, FieldMetadata>;
+  categories: Record<string, string[]>;
+  last_updated?: string;
+  version?: string;
+}
+
 export interface FRSResponse {
   frs_score: number;
   correction_probability: number;
@@ -121,19 +143,21 @@ export async function fetchCMDS(frsWeight = 0.65, vpWeight = 0.35): Promise<CMDS
   return res.json();
 }
 
-export interface ManualInputUpdate {
-  hedge_fund_leverage?: number;
-  cre_delinquency_rate?: number;
-  as_of?: string;
-}
-
-export async function updateManualInputs(update: ManualInputUpdate): Promise<{ status: string; updated: Record<string, any>; message: string }> {
+/**
+ * Update manual inputs - accepts any field dynamically
+ */
+export async function updateManualInputs(updates: Record<string, any>): Promise<{ 
+  status: string; 
+  updated_fields: string[];
+  values: Record<string, any>;
+  message: string;
+}> {
   const res = await fetch(`${API_BASE_URL}/api/frs/manual-inputs`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(update),
+    body: JSON.stringify(updates),
   });
   if (!res.ok) {
     const error = await res.json();
@@ -142,9 +166,24 @@ export async function updateManualInputs(update: ManualInputUpdate): Promise<{ s
   return res.json();
 }
 
-export async function getManualInputs(): Promise<Record<string, ManualInput>> {
+/**
+ * Get all manual inputs with comprehensive metadata
+ */
+export async function getManualInputs(): Promise<ManualInputsResponse> {
   const res = await fetch(`${API_BASE_URL}/api/frs/manual-inputs`);
   if (!res.ok) throw new Error('Failed to fetch manual inputs');
+  return res.json();
+}
+
+/**
+ * Get field metadata only (lighter endpoint)
+ */
+export async function getManualInputsMetadata(): Promise<{
+  fields: Record<string, FieldMetadata>;
+  categories: Record<string, string[]>;
+}> {
+  const res = await fetch(`${API_BASE_URL}/api/frs/manual-inputs/metadata`);
+  if (!res.ok) throw new Error('Failed to fetch metadata');
   return res.json();
 }
 
