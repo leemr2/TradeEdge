@@ -35,9 +35,11 @@ class ValuationCategory(BaseCategory):
     def _score_forward_pe(self) -> Dict[str, Any]:
         """
         Category 2.1: Forward P/E vs Historical (0-10 points)
-        0 points: ≤ Historical median (~16x)
-        5 points: 1 SD above (~19-20x)
-        10 points: Dot-com/2021 levels (22x+)
+        Reference Guide Spec:
+        - ≤16x: 0 points (historical median)
+        - 16-19.5x: Linear interpolation 0-5 points (1 SD above)
+        - 19.5-22x: Linear interpolation 5-10 points (extreme)
+        - >22x: 10 points (dot-com/2021 levels)
         """
         try:
             # Try to get P/E (with historical estimate fallback)
@@ -54,12 +56,23 @@ class ValuationCategory(BaseCategory):
                     'data_source': 'Yahoo Finance: ^GSPC'
                 }
             
-            if forward_pe <= 16:
+            # Define thresholds per reference guide
+            historical_median = 16.0
+            one_sd_above = 19.5
+            extreme_level = 22.0
+            
+            # Calculate score with linear interpolation
+            if forward_pe <= historical_median:
                 score = 0.0
                 interpretation = 'At or below historical median - fair value'
-            elif forward_pe <= 20:
-                score = 5.0
-                interpretation = '1 SD above median - expensive'
+            elif forward_pe <= one_sd_above:
+                # Linear interpolation 0-5 between 16 and 19.5
+                score = (forward_pe - historical_median) / (one_sd_above - historical_median) * 5.0
+                interpretation = f'Moderately expensive ({score:.1f}/5 in range)'
+            elif forward_pe <= extreme_level:
+                # Linear interpolation 5-10 between 19.5 and 22
+                score = 5.0 + (forward_pe - one_sd_above) / (extreme_level - one_sd_above) * 5.0
+                interpretation = f'Very expensive ({score:.1f}/10 - approaching bubble)'
             else:
                 score = 10.0
                 interpretation = 'Dot-com/2021 bubble levels - extreme valuation'
@@ -87,9 +100,10 @@ class ValuationCategory(BaseCategory):
     def _score_buffett_indicator(self) -> Dict[str, Any]:
         """
         Category 2.2: Buffett Indicator (0-10 points)
-        0 points: Normal range (<100%)
-        5 points: High but below prior peaks (100-140%)
-        10 points: At/above dot-com & 2007 highs (>140%)
+        Reference Guide Spec:
+        - <100%: 0 points (normal range)
+        - 100-140%: Linear interpolation 0-5 points
+        - >140%: Linear interpolation 5-10 points (capped at 10)
         """
         try:
             # Market cap / GDP ratio
@@ -110,15 +124,18 @@ class ValuationCategory(BaseCategory):
             ratio = buffett_ratio.iloc[-1]
             last_updated = self._get_latest_timestamp(buffett_ratio)
             
+            # Calculate score with linear interpolation per reference guide
             if ratio < 100:
                 score = 0.0
                 interpretation = 'Normal range - fair value or better'
-            elif ratio < 140:
-                score = 5.0
-                interpretation = 'High but below prior peaks - very expensive'
+            elif ratio <= 140:
+                # Linear interpolation 0-5 between 100 and 140
+                score = (ratio - 100) / 40 * 5.0
+                interpretation = f'High but below prior peaks ({score:.1f}/5 - very expensive)'
             else:
-                score = 10.0
-                interpretation = 'At/above dot-com & 2007 highs - extreme bubble territory'
+                # Linear interpolation 5-10 above 140, capped at 10
+                score = min(10.0, 5.0 + (ratio - 140) / 40 * 5.0)
+                interpretation = f'At/above dot-com & 2007 highs ({score:.1f}/10 - extreme bubble territory)'
             
             return {
                 'name': 'buffett_indicator',
@@ -143,9 +160,10 @@ class ValuationCategory(BaseCategory):
     def _score_equity_yield_vs_tbill(self) -> Dict[str, Any]:
         """
         Category 2.3: Equity Yield vs T-Bills (0-10 points)
-        0 points: Earnings yield >> T-bill yield
-        5 points: Roughly equal
-        10 points: Equity yield < T-bill yield
+        Reference Guide Spec:
+        - >2.0pp spread: 0 points (adequate premium)
+        - -0.5 to 2.0pp: Linear interpolation 0-5 points
+        - <-0.5pp: Linear interpolation 5-10 points (inverted premium)
         """
         try:
             # Get forward P/E to calculate earnings yield (with historical estimate fallback)
@@ -158,34 +176,47 @@ class ValuationCategory(BaseCategory):
                     'value': None,
                     'last_updated': datetime.now().isoformat(),
                     'interpretation': 'Data unavailable - using default moderate risk score',
-                    'data_source': 'Yahoo Finance + FRED: DTB3'
+                    'data_source': 'Yahoo Finance + FRED: DTB3, DTB6'
                 }
             
             earnings_yield = (1.0 / forward_pe) * 100  # Percentage
             
-            # Get 3-month T-bill rate
+            # Get 3-month and 6-month T-bill rates and average them per reference guide
             tbill_3m = self.fred.get_latest_value('DTB3')
-            if tbill_3m is None:
-                return {
-                    'name': 'equity_yield',
-                    'score': 0.0,
-                    'value': None,
-                    'last_updated': None,
-                    'interpretation': 'T-bill data unavailable',
-                    'data_source': 'FRED: DTB3'
-                }
+            tbill_6m = self.fred.get_latest_value('DTB6')
             
-            spread = earnings_yield - tbill_3m
+            if tbill_3m is None or tbill_6m is None:
+                # Fallback to just 3M if 6M unavailable
+                if tbill_3m is not None:
+                    tbill_avg = tbill_3m
+                    print(f"  ℹ Using only DTB3 (DTB6 unavailable)")
+                else:
+                    return {
+                        'name': 'equity_yield',
+                        'score': 0.0,
+                        'value': None,
+                        'last_updated': None,
+                        'interpretation': 'T-bill data unavailable',
+                        'data_source': 'FRED: DTB3, DTB6'
+                    }
+            else:
+                # Average 3M and 6M per reference guide specification
+                tbill_avg = (tbill_3m + tbill_6m) / 2.0
             
+            spread = earnings_yield - tbill_avg
+            
+            # Calculate score with linear interpolation per reference guide
             if spread > 2.0:
                 score = 0.0
                 interpretation = 'Adequate equity risk premium (>2pp)'
-            elif spread > 0:
-                score = 5.0
-                interpretation = 'Shrinking equity premium - minimal compensation for risk'
+            elif spread >= -0.5:
+                # Linear interpolation 0-5 between 2.0 and -0.5
+                score = (2.0 - spread) / 2.5 * 5.0
+                interpretation = f'Shrinking equity premium ({score:.1f}/5 - minimal compensation for risk)'
             else:
-                score = 10.0
-                interpretation = 'Inverted risk premium - no compensation for equity risk'
+                # Linear interpolation 5-10 below -0.5, capped at 10
+                score = min(10.0, 5.0 + (-0.5 - spread) / 2.0 * 5.0)
+                interpretation = f'Inverted risk premium ({score:.1f}/10 - no compensation for equity risk)'
             
             return {
                 'name': 'equity_yield',
@@ -193,7 +224,7 @@ class ValuationCategory(BaseCategory):
                 'value': round(spread, 2),
                 'last_updated': datetime.now().isoformat(),
                 'interpretation': interpretation,
-                'data_source': 'Yahoo Finance + FRED: DTB3'
+                'data_source': 'Yahoo Finance + FRED: DTB3, DTB6'
             }
                 
         except Exception as e:
@@ -204,7 +235,7 @@ class ValuationCategory(BaseCategory):
                 'value': None,
                 'last_updated': None,
                 'interpretation': f'Error: {str(e)}',
-                'data_source': 'Yahoo Finance + FRED: DTB3'
+                'data_source': 'Yahoo Finance + FRED: DTB3, DTB6'
             }
     
     def get_metadata(self) -> CategoryMetadata:
@@ -214,7 +245,7 @@ class ValuationCategory(BaseCategory):
             max_points=25.0,
             description='Assesses whether stocks are expensive relative to fundamentals through forward P/E ratios, the Buffett Indicator (market cap/GDP), and equity yield vs risk-free rates.',
             update_frequency='Daily (P/E, Equity Yield), Quarterly (Buffett Indicator)',
-            data_sources=['Yahoo Finance: ^GSPC', 'FRED: DDDM01USA156NWDB', 'FRED: DTB3'],
+            data_sources=['Yahoo Finance: ^GSPC', 'FRED: DDDM01USA156NWDB', 'FRED: DTB3', 'FRED: DTB6'],
             next_update='Daily (after market close)'
         )
 
