@@ -22,6 +22,9 @@ except ImportError:
 class YFinanceClient:
     """Client for fetching Yahoo Finance data with local caching"""
     
+    # Class-level flag to track if timezone cache has been set
+    _tz_cache_initialized = False
+    
     def __init__(self, cache_dir: str = "data/cache/yfinance"):
         """
         Initialize Yahoo Finance client
@@ -47,9 +50,11 @@ class YFinanceClient:
     def _configure_yfinance(self):
         """Configure yfinance with proper settings"""
         try:
-            # Set timezone cache location
+            # Set timezone cache location only once (class-level)
             # Note: yfinance 0.2.66+ uses curl_cffi internally, so we don't set custom sessions
-            yf.set_tz_cache_location(str(self.cache_dir / "tz_cache"))
+            if not YFinanceClient._tz_cache_initialized:
+                yf.set_tz_cache_location(str(self.cache_dir / "tz_cache"))
+                YFinanceClient._tz_cache_initialized = True
             
             # Store timeout setting
             self.timeout = 10  # 10 second timeout
@@ -57,7 +62,9 @@ class YFinanceClient:
             # Don't create custom session - let yfinance handle it with curl_cffi
             self.session = None
         except Exception as e:
-            print(f"  ⚠ Warning: Could not configure yfinance: {e}")
+            # Silently ignore timezone cache already initialized errors
+            if "already initialized" not in str(e):
+                print(f"  ⚠ Warning: Could not configure yfinance: {e}")
             self.session = None
             self.timeout = 10
     

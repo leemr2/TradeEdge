@@ -452,8 +452,7 @@ class LeverageStabilityCategory(BaseCategory):
             if not self.yfinance:
                 return 0.0, {'interpretation': 'No yfinance client'}
             
-            kre = self.yfinance.get_ticker('KRE')
-            hist = kre.history(period='1y')
+            hist = self.yfinance.fetch_ticker('KRE', period='1y')
             
             if len(hist) == 0:
                 return 0.0, {'interpretation': 'No KRE data'}
