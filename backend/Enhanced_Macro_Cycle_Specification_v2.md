@@ -475,7 +475,7 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 1. Unemployment (Sahm): 3/10 ✓
 2. Yield Curve: 10/10 ✓
 3. GDP: 5/10 ✓
-**Total: 25/30 (83%)**
+**Total: 18/30 **
 
 **Enhanced System (40 points):**
 1. Unemployment (Sahm): 3/10 ✓
@@ -484,12 +484,7 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 4. U-6 Underemployment: 5/5 🔴 (up 1.4pp)
 5. Labor Market Softness: 4/5 🔴 (openings -36%, quits -30%)
 6. High-Income Stress: 4/5 🔴 (153k tech + finance layoffs)
-**Total: 36/40 (90%)**
-
-**Improvement:** 
-- Old system: 25/30 = moderately elevated risk
-- New system: 36/40 = severe risk, multiple red flags
-- Better captures the deterioration your research documents
+**Total: 29/40 **
 
 ---
 
@@ -558,7 +553,7 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 | 0-10 | **Low** | Healthy expansion, strong labor market | 2013-2015, 2017-2019 |
 | 11-20 | **Moderate** | Late-cycle, some cooling | 2018, early 2019 |
 | 21-30 | **Elevated** | Clear warning signs, recession probable | Late 2007, late 2019 |
-| 31-40 | **Severe** | Multiple red flags, recession imminent/starting | 2008, 2020, **2025** |
+| 31-40 | **Severe** | Multiple red flags, recession imminent/starting | 2008, 2020, **2025?** |
 
 ### Component Analysis Patterns
 
@@ -648,11 +643,11 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 - U-6: 5/5 (up 1.4pp from trough)
 - Labor Softness: 4/5 (openings -36%, quits -30%)
 - High-Income Stress: 4/5 (153k tech + finance layoffs)
-- Sahm Rule: 10/10 (triggered)
+- Sahm Rule: 3/10 (not triggered)
 - Yield Curve: 10/10 (extended inversion + steepening)
 - GDP: 3/5 (1.9% growth, near stall)
 
-**Total: 36/40 (90%) 🔴**
+**Total: 29/40  🔴**
 
 **Interpretation:** Multiple severe warning signals across all categories. Pattern consistent with 2008 and 2001 pre-recession setups. Recession highly probable within 3-6 months.
 
@@ -831,7 +826,7 @@ You now have a system that provides **3-9 months of advance warning** instead of
 **Current Late 2025 Reality:**
 - Your research documents severe deterioration across all metrics
 - Current system: 17/30 (moderately elevated)
-- Enhanced system: 28/40 ( multiple red flags)
+- Enhanced system: 29/40 ( multiple red flags)
 - **The enhanced system better captures the actual risk level**
 
 This specification gives you the blueprint to build a truly **predictive** macro risk system that aligns with the comprehensive research you've compiled.

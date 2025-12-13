@@ -147,7 +147,16 @@ export default function ManualInputsManager() {
           <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             {fieldNames.map((fieldName) => {
               const fieldMeta = metadata[fieldName];
-              if (!fieldMeta) return null;
+              
+              if (!fieldMeta) {
+                return (
+                  <div key={fieldName} className="p-3 bg-yellow-50 border border-yellow-300 rounded">
+                    <div className="text-sm text-yellow-800">
+                      ⚠️ Missing metadata for: <code>{fieldName}</code>
+                    </div>
+                  </div>
+                );
+              }
 
               // Get value and as_of date
               const value = values[fieldName] ?? fieldMeta.min ?? 0;

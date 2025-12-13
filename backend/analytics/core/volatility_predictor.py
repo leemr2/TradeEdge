@@ -357,6 +357,12 @@ class VolatilityPredictorV2:
             trends_df.rename(columns={trends_df.columns[0]: 'date'}, inplace=True)
             market_df.rename(columns={market_df.columns[0]: 'date'}, inplace=True)
             
+            # Ensure date columns are timezone-naive
+            if hasattr(trends_df['date'].dtype, 'tz') and trends_df['date'].dt.tz is not None:
+                trends_df['date'] = trends_df['date'].dt.tz_localize(None)
+            if hasattr(market_df['date'].dtype, 'tz') and market_df['date'].dt.tz is not None:
+                market_df['date'] = market_df['date'].dt.tz_localize(None)
+            
             trends_df = trends_df.sort_values('date')
             market_df = market_df.sort_values('date')
             
@@ -386,6 +392,12 @@ class VolatilityPredictorV2:
                 
                 trends_df.rename(columns={trends_df.columns[0]: 'date'}, inplace=True)
                 market_df.rename(columns={market_df.columns[0]: 'date'}, inplace=True)
+                
+                # Ensure date columns are timezone-naive
+                if hasattr(trends_df['date'].dtype, 'tz') and trends_df['date'].dt.tz is not None:
+                    trends_df['date'] = trends_df['date'].dt.tz_localize(None)
+                if hasattr(market_df['date'].dtype, 'tz') and market_df['date'].dt.tz is not None:
+                    market_df['date'] = market_df['date'].dt.tz_localize(None)
                 
                 trends_df = trends_df.sort_values('date')
                 market_df = market_df.sort_values('date')

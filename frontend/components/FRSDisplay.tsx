@@ -104,34 +104,68 @@ export default function FRSDisplay({ data }: FRSDisplayProps) {
         </div>
       )}
 
-      {/* Manual Inputs Section */}
-      {data.manual_inputs_structured && Object.keys(data.manual_inputs_structured).length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold mb-3">Manual Inputs</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {data.manual_inputs_structured.hedge_fund_leverage && (
-              <ManualInputEditor
-                name="hedge_fund_leverage"
-                label="Hedge Fund Leverage"
-                input={data.manual_inputs_structured.hedge_fund_leverage}
-                min={0}
-                max={10}
-                onUpdate={handleManualInputUpdate}
-              />
-            )}
-            {data.manual_inputs_structured.cre_delinquency_rate && (
-              <ManualInputEditor
-                name="cre_delinquency_rate"
-                label="CRE Delinquency Rate (%)"
-                input={data.manual_inputs_structured.cre_delinquency_rate}
-                min={0}
-                max={20}
-                onUpdate={handleManualInputUpdate}
-              />
-            )}
+      {/* Manual Inputs Section - Link to Full Editor */}
+      <div className="mb-6">
+        <div className="bg-gradient-to-r from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-6">
+          <div className="flex items-start justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Manual Risk Inputs</h3>
+              <p className="text-sm text-gray-700 mb-3">
+                Leverage & Stability category requires 14 manual input fields from Fed FSR, FDIC QBP, and CRE market data.
+              </p>
+              <div className="flex items-center gap-4 text-xs text-gray-600">
+                <div>
+                  <span className="font-semibold">Categories:</span> 5
+                </div>
+                <div>
+                  <span className="font-semibold">Fields:</span> 14
+                </div>
+                <div>
+                  <span className="font-semibold">Status:</span> 
+                  <span className="text-green-700 font-medium"> Operational</span>
+                </div>
+              </div>
+            </div>
+            <div>
+              <a
+                href="/admin/manual-inputs"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                </svg>
+                Manage All Inputs
+              </a>
+            </div>
           </div>
+
+          {/* Quick Summary - Show sample of current values */}
+          {data.manual_inputs_structured && (
+            <div className="mt-4 pt-4 border-t border-blue-200">
+              <div className="text-xs text-gray-600 mb-2 font-semibold">Sample Current Values:</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                {data.manual_inputs_structured.cre_delinquency_rate && (
+                  <div className="bg-white rounded p-2">
+                    <div className="text-gray-600">CRE Delinquency</div>
+                    <div className="text-lg font-bold text-gray-900">
+                      {data.manual_inputs_structured.cre_delinquency_rate.value}%
+                    </div>
+                  </div>
+                )}
+                <div className="bg-white rounded p-2 opacity-60">
+                  <div className="text-gray-600">HF Leverage</div>
+                  <div className="text-sm font-semibold text-gray-700">
+                    + 13 more fields
+                  </div>
+                </div>
+                <div className="col-span-2 flex items-center justify-center text-gray-500 text-sm">
+                  Click "Manage All Inputs" to view and edit all 14 fields →
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Fallback: Simple Category Grid (if detailed structure not available) */}
       {!data.categories && (

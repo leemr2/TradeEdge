@@ -171,7 +171,11 @@ export async function updateManualInputs(updates: Record<string, any>): Promise<
  */
 export async function getManualInputs(): Promise<ManualInputsResponse> {
   const res = await fetch(`${API_BASE_URL}/api/frs/manual-inputs`);
-  if (!res.ok) throw new Error('Failed to fetch manual inputs');
+  if (!res.ok) {
+    const errorText = await res.text();
+    console.error('API Error:', errorText);
+    throw new Error(`Failed to fetch manual inputs: ${res.status} ${res.statusText}`);
+  }
   return res.json();
 }
 
