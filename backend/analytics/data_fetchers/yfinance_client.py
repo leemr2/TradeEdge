@@ -133,6 +133,11 @@ class YFinanceClient:
                     cache_data = json.load(f)
                     df = pd.DataFrame(cache_data['data'])
                     df.index = pd.to_datetime(df['Date'])
+                    
+                    # Remove timezone if present (for compatibility with old cached data)
+                    if hasattr(df.index, 'tz') and df.index.tz is not None:
+                        df.index = df.index.tz_localize(None)
+                    
                     df = df.drop('Date', axis=1)
                     print(f"  ✓ Using cached {ticker}")
                     return df
@@ -160,6 +165,10 @@ class YFinanceClient:
                     if attempt < self.max_retries - 1:
                         continue  # Retry
                     raise ValueError(f"No data returned for {ticker}")
+                
+                # Remove timezone from index before caching (to avoid compatibility issues)
+                if hasattr(data.index, 'tz') and data.index.tz is not None:
+                    data.index = data.index.tz_localize(None)
                 
                 # Cache the data
                 cache_data = {
@@ -191,7 +200,8 @@ class YFinanceClient:
                 # If all retries failed and allow_stale, try to use any cached data
                 if allow_stale:
                     # Look for any cache file for this ticker
-                    stale_cache_files = list(self.cache_dir.glob(f"{ticker.replace('^', '')}*.json"))
+                    safe_ticker = ticker.replace('^', '').replace('/', '_')
+                    stale_cache_files = list(self.cache_dir.glob(f"{safe_ticker}*.json"))
                     if stale_cache_files:
                         try:
                             # Use most recent cache file
@@ -200,6 +210,11 @@ class YFinanceClient:
                                 cache_data = json.load(f)
                                 df = pd.DataFrame(cache_data['data'])
                                 df.index = pd.to_datetime(df['Date'])
+                                
+                                # Remove timezone if present
+                                if hasattr(df.index, 'tz') and df.index.tz is not None:
+                                    df.index = df.index.tz_localize(None)
+                                
                                 df = df.drop('Date', axis=1)
                                 print(f"  ⚠ Using stale cache for {ticker} (from {latest_cache.name})")
                                 return df

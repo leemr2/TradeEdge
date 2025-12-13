@@ -85,7 +85,11 @@ class VolatilityPredictorV2:
                     age = datetime.now() - file_time
                     if age.total_seconds() / 3600 < ttl_hours:
                         print(f"  ✓ Using cached Google Trends data")
-                        return pd.read_pickle(cache_file)
+                        cached_data = pd.read_pickle(cache_file)
+                        # Ensure index is timezone-naive
+                        if hasattr(cached_data.index, 'tz') and cached_data.index.tz is not None:
+                            cached_data.index = cached_data.index.tz_localize(None)
+                        return cached_data
                 except Exception as e:
                     print(f"  ⚠ Cache read error: {e}")
         
@@ -135,6 +139,9 @@ class VolatilityPredictorV2:
             try:
                 cache_file = Path(cache_path)
                 cache_file.parent.mkdir(parents=True, exist_ok=True)
+                # Ensure index is timezone-naive before caching
+                if hasattr(all_trends.index, 'tz') and all_trends.index.tz is not None:
+                    all_trends.index = all_trends.index.tz_localize(None)
                 all_trends.to_pickle(cache_file)
                 print(f"  ✓ Cached Google Trends data")
             except Exception as e:
