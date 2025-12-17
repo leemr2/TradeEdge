@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import json
 import pandas as pd
+import numpy as np
 from typing import Optional, Dict, Any
 import warnings
 import time
@@ -101,6 +102,34 @@ class YFinanceClient:
         else:
             return age.total_seconds() / 3600 < ttl_hours  # Use provided TTL outside market hours
     
+    def _sanitize_value(self, val: Any) -> Any:
+        """
+        Sanitize a value for JSON serialization
+        Converts NaN and Inf to None
+        """
+        if val is None:
+            return None
+        if isinstance(val, (int, str, bool)):
+            return val
+        if isinstance(val, float):
+            if np.isnan(val) or np.isinf(val):
+                return None
+            return float(val)
+        if pd.isna(val):
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+    
+    def _ensure_timezone_naive(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensure DataFrame index is timezone-naive for consistency
+        """
+        if hasattr(df.index, 'tz') and df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+        return df
+    
     def fetch_ticker(self,
                      ticker: str,
                      period: str = "1y",
@@ -132,13 +161,16 @@ class YFinanceClient:
                 with open(cache_path, 'r') as f:
                     cache_data = json.load(f)
                     df = pd.DataFrame(cache_data['data'])
-                    df.index = pd.to_datetime(df['Date'])
                     
-                    # Remove timezone if present (for compatibility with old cached data)
-                    if hasattr(df.index, 'tz') and df.index.tz is not None:
-                        df.index = df.index.tz_localize(None)
+                    # Convert Date column to datetime index, handling timezone
+                    date_col = pd.to_datetime(df['Date'])
+                    if hasattr(date_col, 'dt') and hasattr(date_col.dt, 'tz') and date_col.dt.tz is not None:
+                        df.index = date_col.dt.tz_localize(None)
+                    else:
+                        df.index = date_col
                     
                     df = df.drop('Date', axis=1)
+                    df = self._ensure_timezone_naive(df)
                     print(f"  ✓ Using cached {ticker}")
                     return df
             except Exception as e:
@@ -166,19 +198,17 @@ class YFinanceClient:
                         continue  # Retry
                     raise ValueError(f"No data returned for {ticker}")
                 
-                # Remove timezone from index before caching (to avoid compatibility issues)
-                if hasattr(data.index, 'tz') and data.index.tz is not None:
-                    data.index = data.index.tz_localize(None)
+                # Ensure timezone-naive index for consistency
+                data = self._ensure_timezone_naive(data)
                 
-                # Cache the data
+                # Cache the data with sanitized values
                 cache_data = {
                     'ticker': ticker,
                     'period': period,
                     'interval': interval,
                     'data': [{
                         'Date': d.isoformat(),
-                        **{col: float(val) if pd.notna(val) else None 
-                           for col, val in row.items()}
+                        **{col: self._sanitize_value(val) for col, val in row.items()}
                     } for d, row in data.iterrows()]
                 }
                 
@@ -209,13 +239,16 @@ class YFinanceClient:
                             with open(latest_cache, 'r') as f:
                                 cache_data = json.load(f)
                                 df = pd.DataFrame(cache_data['data'])
-                                df.index = pd.to_datetime(df['Date'])
                                 
-                                # Remove timezone if present
-                                if hasattr(df.index, 'tz') and df.index.tz is not None:
-                                    df.index = df.index.tz_localize(None)
+                                # Convert Date column to datetime index, handling timezone
+                                date_col = pd.to_datetime(df['Date'])
+                                if hasattr(date_col, 'dt') and hasattr(date_col.dt, 'tz') and date_col.dt.tz is not None:
+                                    df.index = date_col.dt.tz_localize(None)
+                                else:
+                                    df.index = date_col
                                 
                                 df = df.drop('Date', axis=1)
+                                df = self._ensure_timezone_naive(df)
                                 print(f"  ⚠ Using stale cache for {ticker} (from {latest_cache.name})")
                                 return df
                         except Exception as cache_err:

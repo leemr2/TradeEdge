@@ -339,10 +339,17 @@ class VolatilityPredictorV2:
             print("  Using market-only mode (no trends data)")
         else:
             print("\nAligning trends and market data...")
-            self.trends_data.index = pd.to_datetime(self.trends_data.index).normalize()
             
+            # Ensure trends index is timezone-naive DatetimeIndex
+            if not isinstance(self.trends_data.index, pd.DatetimeIndex):
+                self.trends_data.index = pd.DatetimeIndex(self.trends_data.index)
+            
+            # Remove timezone if present BEFORE normalizing
             if hasattr(self.trends_data.index, 'tz') and self.trends_data.index.tz is not None:
                 self.trends_data.index = self.trends_data.index.tz_localize(None)
+            
+            # Now normalize
+            self.trends_data.index = self.trends_data.index.normalize()
             
             print(f"  Trends: {len(self.trends_data)} points from {self.trends_data.index.min()} to {self.trends_data.index.max()}")
         
@@ -364,9 +371,13 @@ class VolatilityPredictorV2:
             trends_df.rename(columns={trends_df.columns[0]: 'date'}, inplace=True)
             market_df.rename(columns={market_df.columns[0]: 'date'}, inplace=True)
             
-            # Ensure date columns are timezone-naive
+            # Ensure date columns are timezone-naive datetime64
+            # Convert to datetime, handling timezone if present
+            trends_df['date'] = pd.to_datetime(trends_df['date'])
             if hasattr(trends_df['date'].dtype, 'tz') and trends_df['date'].dt.tz is not None:
                 trends_df['date'] = trends_df['date'].dt.tz_localize(None)
+            
+            market_df['date'] = pd.to_datetime(market_df['date'])
             if hasattr(market_df['date'].dtype, 'tz') and market_df['date'].dt.tz is not None:
                 market_df['date'] = market_df['date'].dt.tz_localize(None)
             
@@ -400,9 +411,13 @@ class VolatilityPredictorV2:
                 trends_df.rename(columns={trends_df.columns[0]: 'date'}, inplace=True)
                 market_df.rename(columns={market_df.columns[0]: 'date'}, inplace=True)
                 
-                # Ensure date columns are timezone-naive
+                # Ensure date columns are timezone-naive datetime64
+                # Convert to datetime, handling timezone if present
+                trends_df['date'] = pd.to_datetime(trends_df['date'])
                 if hasattr(trends_df['date'].dtype, 'tz') and trends_df['date'].dt.tz is not None:
                     trends_df['date'] = trends_df['date'].dt.tz_localize(None)
+                
+                market_df['date'] = pd.to_datetime(market_df['date'])
                 if hasattr(market_df['date'].dtype, 'tz') and market_df['date'].dt.tz is not None:
                     market_df['date'] = market_df['date'].dt.tz_localize(None)
                 

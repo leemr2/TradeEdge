@@ -9,6 +9,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from functools import lru_cache
+import math
+import json
 
 # Load environment variables from .env file
 try:
@@ -35,6 +37,39 @@ from analytics.core.manual_inputs import (
     get_field_metadata,
     get_category_groups
 )
+
+
+def sanitize_for_json(obj: Any) -> Any:
+    """
+    Recursively sanitize an object for JSON serialization
+    Converts NaN and Inf to None, handles nested dicts/lists
+    """
+    if obj is None:
+        return None
+    
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(item) for item in obj]
+    
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    
+    if isinstance(obj, (int, str, bool)):
+        return obj
+    
+    # For datetime and other objects, try to convert to string
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    
+    try:
+        # Try to convert to string as fallback
+        return str(obj)
+    except:
+        return None
 
 
 app = FastAPI(
@@ -109,7 +144,7 @@ async def get_volatility():
     # Check cache
     cached = get_cached_response("volatility", ttl_minutes=15)
     if cached:
-        return JSONResponse(cached)
+        return JSONResponse(sanitize_for_json(cached))
     
     try:
         predictor = VolatilityPredictorV2()
@@ -126,6 +161,9 @@ async def get_volatility():
             predictor.prepare_training_data()
         
         result = predictor.get_current_prediction()
+        
+        # Sanitize before caching and returning
+        result = sanitize_for_json(result)
         
         # Cache response
         set_cached_response("volatility", result, ttl_minutes=15)
@@ -147,13 +185,16 @@ async def get_frs():
     # Check cache
     cached = get_cached_response("frs", ttl_minutes=60)  # Cache for 1 hour
     if cached:
-        return JSONResponse(cached)
+        return JSONResponse(sanitize_for_json(cached))
     
     try:
         fred_api_key = os.getenv('FRED_API_KEY')
         calculator = FRSCalculator(fred_api_key=fred_api_key)
         
         result = calculator.calculate_frs()
+        
+        # Sanitize before caching and returning
+        result = sanitize_for_json(result)
         
         # Cache response
         set_cached_response("frs", result, ttl_minutes=60)
@@ -187,7 +228,7 @@ async def get_cmds(frs_weight: Optional[float] = 0.65, vp_weight: Optional[float
     cache_key = f"cmds_{frs_weight}_{vp_weight}"
     cached = get_cached_response(cache_key, ttl_minutes=5)
     if cached:
-        return JSONResponse(cached)
+        return JSONResponse(sanitize_for_json(cached))
     
     try:
         fred_api_key = os.getenv('FRED_API_KEY')
@@ -198,6 +239,9 @@ async def get_cmds(frs_weight: Optional[float] = 0.65, vp_weight: Optional[float
         )
         
         result = calculator.calculate_cmds()
+        
+        # Sanitize before caching and returning
+        result = sanitize_for_json(result)
         
         # Cache response
         set_cached_response(cache_key, result, ttl_minutes=5)
