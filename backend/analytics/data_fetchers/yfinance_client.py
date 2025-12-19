@@ -39,11 +39,11 @@ class YFinanceClient:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        # Rate limiting settings
+        # Rate limiting settings - more conservative to avoid blocks
         self.last_request_time = 0
-        self.min_request_interval = 0.5  # 500ms between requests
-        self.max_retries = 3
-        self.retry_delay = 2  # seconds
+        self.min_request_interval = 1.0  # 1 second between requests (was 500ms)
+        self.max_retries = 2  # Reduced retries to avoid hammering API
+        self.retry_delay = 3  # Increased delay between retries (was 2 seconds)
         
         # Configure user agent for yfinance to avoid blocks
         self._configure_yfinance()
@@ -125,8 +125,12 @@ class YFinanceClient:
     def _ensure_timezone_naive(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Ensure DataFrame index is timezone-naive for consistency
+        More robust handling for timezone-aware data from yfinance 0.2.66+
         """
         if hasattr(df.index, 'tz') and df.index.tz is not None:
+            # Convert to UTC first if not already, then remove timezone
+            if df.index.tz.zone != 'UTC':
+                df.index = df.index.tz_convert('UTC')
             df.index = df.index.tz_localize(None)
         return df
     

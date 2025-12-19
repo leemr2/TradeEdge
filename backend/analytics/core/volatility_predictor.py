@@ -372,14 +372,9 @@ class VolatilityPredictorV2:
             market_df.rename(columns={market_df.columns[0]: 'date'}, inplace=True)
             
             # Ensure date columns are timezone-naive datetime64
-            # Convert to datetime, handling timezone if present
-            trends_df['date'] = pd.to_datetime(trends_df['date'])
-            if hasattr(trends_df['date'].dtype, 'tz') and trends_df['date'].dt.tz is not None:
-                trends_df['date'] = trends_df['date'].dt.tz_localize(None)
-            
-            market_df['date'] = pd.to_datetime(market_df['date'])
-            if hasattr(market_df['date'].dtype, 'tz') and market_df['date'].dt.tz is not None:
-                market_df['date'] = market_df['date'].dt.tz_localize(None)
+            # Convert to datetime, forcing timezone removal
+            trends_df['date'] = pd.to_datetime(trends_df['date'], utc=True).dt.tz_localize(None)
+            market_df['date'] = pd.to_datetime(market_df['date'], utc=True).dt.tz_localize(None)
             
             trends_df = trends_df.sort_values('date')
             market_df = market_df.sort_values('date')
@@ -412,14 +407,9 @@ class VolatilityPredictorV2:
                 market_df.rename(columns={market_df.columns[0]: 'date'}, inplace=True)
                 
                 # Ensure date columns are timezone-naive datetime64
-                # Convert to datetime, handling timezone if present
-                trends_df['date'] = pd.to_datetime(trends_df['date'])
-                if hasattr(trends_df['date'].dtype, 'tz') and trends_df['date'].dt.tz is not None:
-                    trends_df['date'] = trends_df['date'].dt.tz_localize(None)
-                
-                market_df['date'] = pd.to_datetime(market_df['date'])
-                if hasattr(market_df['date'].dtype, 'tz') and market_df['date'].dt.tz is not None:
-                    market_df['date'] = market_df['date'].dt.tz_localize(None)
+                # Convert to datetime, forcing timezone removal
+                trends_df['date'] = pd.to_datetime(trends_df['date'], utc=True).dt.tz_localize(None)
+                market_df['date'] = pd.to_datetime(market_df['date'], utc=True).dt.tz_localize(None)
                 
                 trends_df = trends_df.sort_values('date')
                 market_df = market_df.sort_values('date')
