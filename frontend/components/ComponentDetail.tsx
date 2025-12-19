@@ -57,7 +57,9 @@ export default function ComponentDetail({ component }: ComponentDetailProps) {
           )}
         </div>
         <span className="text-sm font-bold">
-          {component.score.toFixed(1)} / 10
+          {component.score !== null && component.score !== undefined 
+            ? `${component.score.toFixed(1)} / 10`
+            : 'N/A'}
         </span>
       </div>
       

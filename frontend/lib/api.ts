@@ -20,7 +20,7 @@ export interface VPResponse {
 
 export interface ComponentScore {
   name: string;
-  score: number;
+  score: number | null;
   value?: number | null;
   last_updated?: string | null;
   interpretation?: string;
