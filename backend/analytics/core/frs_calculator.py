@@ -28,7 +28,7 @@ backend_path = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(backend_path))
 
 from analytics.data_fetchers.fred_client import FredClient
-from analytics.data_fetchers.yfinance_client import YFinanceClient
+from analytics.data_fetchers.market_data_manager import MarketDataManager
 from analytics.core.manual_inputs import load_manual_inputs
 from analytics.core.categories import (
     MacroCycleCategory,
@@ -45,7 +45,7 @@ class FRSCalculator:
     def __init__(self, fred_api_key: Optional[str] = None, manual_inputs: Optional[Dict[str, Any]] = None):
         """Initialize FRS calculator with data clients"""
         self.fred = FredClient(api_key=fred_api_key)
-        self.yfinance = YFinanceClient()
+        self.market_data = MarketDataManager()
         
         # Load manual inputs from config file or use provided
         if manual_inputs is None:
@@ -56,27 +56,27 @@ class FRSCalculator:
         # Initialize category calculators
         self.macro_category = MacroCycleCategory(
             fred_client=self.fred,
-            yfinance_client=self.yfinance,
+            market_data=self.market_data,
             manual_inputs=self.manual_inputs
         )
         self.valuation_category = ValuationCategory(
             fred_client=self.fred,
-            yfinance_client=self.yfinance,
+            market_data=self.market_data,
             manual_inputs=self.manual_inputs
         )
         self.leverage_category = LeverageStabilityCategory(
             fred_client=self.fred,
-            yfinance_client=self.yfinance,
+            market_data=self.market_data,
             manual_inputs=self.manual_inputs
         )
         self.earnings_category = EarningsMarginsCategory(
             fred_client=self.fred,
-            yfinance_client=self.yfinance,
+            market_data=self.market_data,
             manual_inputs=self.manual_inputs
         )
         self.sentiment_category = SentimentCategory(
             fred_client=self.fred,
-            yfinance_client=self.yfinance,
+            market_data=self.market_data,
             manual_inputs=self.manual_inputs
         )
     

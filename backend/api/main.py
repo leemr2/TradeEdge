@@ -37,6 +37,7 @@ from analytics.core.manual_inputs import (
     get_field_metadata,
     get_category_groups
 )
+from analytics.utils.api_budget_tracker import get_daily_budget_status
 
 
 def sanitize_for_json(obj: Any) -> Any:
@@ -119,7 +120,8 @@ async def root():
             "health": "/api/health",
             "volatility": "/api/volatility",
             "frs": "/api/frs",
-            "cmds": "/api/cmds"
+            "cmds": "/api/cmds",
+            "budget": "/api/budget"
         }
     }
 
@@ -405,6 +407,20 @@ async def get_manual_inputs_metadata():
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading metadata: {str(e)}")
+
+
+@app.get("/api/budget")
+async def get_budget_status():
+    """
+    Get Alpha Vantage API budget status for today
+    
+    Returns:
+        Dictionary with API call usage: {used: int, limit: int, remaining: int, resets_at: str}
+    """
+    try:
+        return get_daily_budget_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting budget status: {str(e)}")
 
 
 if __name__ == "__main__":

@@ -21,11 +21,11 @@ except ImportError as e:
     print(f"Missing package: {e}")
     exit(1)
 
-# Import our fixed YFinanceClient
+# Import MarketDataManager for unified data fetching
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from data_fetchers.yfinance_client import YFinanceClient
+from data_fetchers.market_data_manager import MarketDataManager
 
 
 class VolatilityPredictorV2:
@@ -61,12 +61,12 @@ class VolatilityPredictorV2:
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize YFinanceClient for reliable data fetching
-        self.yfinance = YFinanceClient()
+        # Initialize MarketDataManager for unified data fetching (Alpha Vantage + Yahoo fallback)
+        self.market_data_manager = MarketDataManager()
         
         # Storage
         self.trends_data = None
-        self.market_data = None
+        self.market_data = None  # This stores the fetched DataFrame, not the manager
         self.features = None
         self.labels = None
         self.model = None
@@ -154,9 +154,9 @@ class VolatilityPredictorV2:
         print(f"\nFetching market data...")
         
         try:
-            # Use our fixed YFinanceClient instead of direct yf.download
-            market = self.yfinance.fetch_ticker(ticker, period=period, ttl_hours=24)
-            vix = self.yfinance.fetch_ticker(vix_ticker, period=period, ttl_hours=24)
+            # Use MarketDataManager (Alpha Vantage primary, Yahoo fallback)
+            market = self.market_data_manager.fetch_ticker(ticker, period=period)
+            vix = self.market_data_manager.fetch_ticker(vix_ticker, period=period)
             
             if market.empty or vix.empty:
                 raise ValueError(f"No data returned for {ticker} or {vix_ticker}")
@@ -301,7 +301,7 @@ class VolatilityPredictorV2:
         print("PREPARING V2 TRAINING DATA (Change-Focused)")
         print("="*60)
         
-        # 1. Get market data (always works with our fixed YFinanceClient)
+        # 1. Get market data (always works with MarketDataManager)
         self.market_data = self.fetch_market_data()
         
         # 2. Try to get Google Trends data with caching

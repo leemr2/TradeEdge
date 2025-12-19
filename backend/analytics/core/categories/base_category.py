@@ -34,17 +34,20 @@ class CategoryMetadata:
 class BaseCategory(ABC):
     """Abstract base class for FRS categories"""
     
-    def __init__(self, fred_client=None, yfinance_client=None, manual_inputs: Optional[Dict[str, Any]] = None):
+    def __init__(self, fred_client=None, yfinance_client=None, market_data=None, manual_inputs: Optional[Dict[str, Any]] = None):
         """
         Initialize category calculator
         
         Args:
             fred_client: FRED API client instance
-            yfinance_client: Yahoo Finance client instance
+            yfinance_client: Yahoo Finance client instance (deprecated, use market_data)
+            market_data: MarketDataManager instance (preferred)
             manual_inputs: Dictionary of manual input values
         """
         self.fred = fred_client
-        self.yfinance = yfinance_client
+        # Support both old (yfinance_client) and new (market_data) for backward compatibility
+        self.market_data = market_data if market_data is not None else yfinance_client
+        self.yfinance = self.market_data  # Keep for backward compatibility
         self.manual_inputs = manual_inputs or {}
     
     @abstractmethod

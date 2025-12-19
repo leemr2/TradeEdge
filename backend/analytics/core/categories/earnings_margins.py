@@ -36,8 +36,8 @@ class EarningsMarginsCategory(BaseCategory):
         """
         try:
             # Fetch QQQ (Nasdaq 100, mega-cap tech) and RSP (equal-weight S&P 500)
-            qqq = self.yfinance.fetch_ticker('QQQ', period='1y')
-            rsp = self.yfinance.fetch_ticker('RSP', period='1y')
+            qqq = self.market_data.fetch_ticker('QQQ', period='1y')
+            rsp = self.market_data.fetch_ticker('RSP', period='1y')
             
             if len(qqq) == 0 or len(rsp) == 0:
                 return {
@@ -100,8 +100,8 @@ class EarningsMarginsCategory(BaseCategory):
         """
         try:
             # Fetch IWM (Russell 2000, small caps) and SPY (S&P 500, large caps)
-            iwm = self.yfinance.fetch_ticker('IWM', period='6mo')
-            spy = self.yfinance.fetch_ticker('SPY', period='6mo')
+            iwm = self.market_data.fetch_ticker('IWM', period='6mo')
+            spy = self.market_data.fetch_ticker('SPY', period='6mo')
             
             if len(iwm) == 0 or len(spy) == 0:
                 return {

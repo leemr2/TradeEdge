@@ -43,7 +43,7 @@ class ValuationCategory(BaseCategory):
         """
         try:
             # Try to get P/E (with historical estimate fallback)
-            forward_pe = self.yfinance.get_forward_pe('SPY', use_historical_estimate=True)
+            forward_pe = self.market_data.get_forward_pe('SPY', use_historical_estimate=True)
             
             if forward_pe is None:
                 print(f"  ℹ P/E not available, using default moderate risk score")
@@ -167,7 +167,7 @@ class ValuationCategory(BaseCategory):
         """
         try:
             # Get forward P/E to calculate earnings yield (with historical estimate fallback)
-            forward_pe = self.yfinance.get_forward_pe('SPY', use_historical_estimate=True)
+            forward_pe = self.market_data.get_forward_pe('SPY', use_historical_estimate=True)
             if forward_pe is None or forward_pe <= 0:
                 print(f"  ℹ Equity yield not available, using default score")
                 return {

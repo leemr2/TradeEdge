@@ -44,7 +44,7 @@ class SentimentCategory(BaseCategory):
         """
         try:
             # Get SPY data (3-month window)
-            spy_data = self.yfinance.fetch_ticker('SPY', period='3mo')
+            spy_data = self.market_data.fetch_ticker('SPY', period='3mo')
             if len(spy_data) == 0:
                 return self._error_response('breadth_divergence', 'Insufficient SPY data')
             
@@ -54,7 +54,7 @@ class SentimentCategory(BaseCategory):
             pct_from_high = ((current_spy - high_52w) / high_52w) * 100
             
             # Get VIX (1-month window for current level)
-            vix_data = self.yfinance.fetch_ticker('^VIX', period='1mo')
+            vix_data = self.market_data.fetch_ticker('^VIX', period='1mo')
             if len(vix_data) == 0:
                 return self._error_response('breadth_divergence', 'Insufficient VIX data')
             
@@ -106,7 +106,7 @@ class SentimentCategory(BaseCategory):
         """
         try:
             # Get VIX level
-            vix_data = self.yfinance.fetch_ticker('^VIX', period='1mo')
+            vix_data = self.market_data.fetch_ticker('^VIX', period='1mo')
             if len(vix_data) == 0:
                 return self._error_response('sentiment_extremes', 'Insufficient VIX data')
             
