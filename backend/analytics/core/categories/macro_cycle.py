@@ -5,6 +5,7 @@ Assesses economic cycle position and recession proximity
 
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
+import pandas as pd
 from .base_category import BaseCategory, ComponentScore, CategoryMetadata
 
 
@@ -61,11 +62,50 @@ class MacroCycleCategory(BaseCategory):
             # Calculate 3-month moving average (official Sahm Rule methodology)
             unrate_3m_ma = unrate.rolling(window=3).mean()
             
-            # Get current 3-month MA
+            # Drop NaN values (first 2 values will be NaN due to rolling window)
+            unrate_3m_ma = unrate_3m_ma.dropna()
+            
+            # Check if we have enough data after dropping NaNs
+            # Need at least 12 months for the lookback window
+            if len(unrate_3m_ma) < 12:
+                return {
+                    'name': 'unemployment',
+                    'score': 0.0,
+                    'value': round(unrate.iloc[-1], 2) if len(unrate) > 0 else None,
+                    'last_updated': self._get_latest_timestamp(unrate),
+                    'interpretation': f'Insufficient data after MA calculation (have {len(unrate_3m_ma)} months, need 12+)',
+                    'data_source': 'FRED: UNRATE'
+                }
+            
+            # Get current 3-month MA (should be valid now after dropna)
             current_ma = unrate_3m_ma.iloc[-1]
             
+            # Validate that current_ma is not NaN
+            if pd.isna(current_ma):
+                return {
+                    'name': 'unemployment',
+                    'score': 0.0,
+                    'value': round(unrate.iloc[-1], 2) if len(unrate) > 0 else None,
+                    'last_updated': self._get_latest_timestamp(unrate),
+                    'interpretation': 'Invalid MA calculation - current MA is NaN',
+                    'data_source': 'FRED: UNRATE'
+                }
+            
             # Find minimum 3-month MA in prior 12 months
-            trough_12m = unrate_3m_ma.iloc[-12:].min()
+            # Use last 12 valid data points
+            lookback_window = min(12, len(unrate_3m_ma))
+            trough_12m = unrate_3m_ma.iloc[-lookback_window:].min()
+            
+            # Validate trough_12m is not NaN
+            if pd.isna(trough_12m):
+                return {
+                    'name': 'unemployment',
+                    'score': 0.0,
+                    'value': round(unrate.iloc[-1], 2) if len(unrate) > 0 else None,
+                    'last_updated': self._get_latest_timestamp(unrate),
+                    'interpretation': 'Invalid MA calculation - trough is NaN',
+                    'data_source': 'FRED: UNRATE'
+                }
             
             # Calculate Sahm indicator (the key metric)
             sahm_indicator = current_ma - trough_12m
@@ -73,6 +113,17 @@ class MacroCycleCategory(BaseCategory):
             # Get current actual unemployment rate (not MA)
             current = unrate.iloc[-1]
             last_updated = self._get_latest_timestamp(unrate)
+            
+            # Validate current unemployment rate
+            if pd.isna(current):
+                return {
+                    'name': 'unemployment',
+                    'score': 0.0,
+                    'value': None,
+                    'last_updated': last_updated,
+                    'interpretation': 'Current unemployment rate is NaN',
+                    'data_source': 'FRED: UNRATE'
+                }
             
             # Score based on Sahm indicator thresholds
             if sahm_indicator < 0 or current <= 4.0:
@@ -103,6 +154,8 @@ class MacroCycleCategory(BaseCategory):
                 
         except Exception as e:
             print(f"Warning: Error scoring unemployment trend: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 'name': 'unemployment',
                 'score': 0.0,
