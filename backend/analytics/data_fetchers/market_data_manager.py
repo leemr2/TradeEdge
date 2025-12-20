@@ -19,8 +19,10 @@ class MarketDataManager:
     
     def fetch_ticker(self, ticker: str, period: str = "1y", **kwargs) -> pd.DataFrame:
         """
-        Smart fetch: Always attempts Alpha Vantage first, then Yahoo Finance, then cache only if both fail.
-        Workflow: Alpha Vantage → Yahoo Finance → Cache (only if both fail)
+        Smart fetch with cache-first logic:
+        1. Check if data is up to date (has yesterday's close)
+        2. If up to date → Use cached data
+        3. If not up to date → Alpha Vantage → Yahoo Finance → Stale cache
         
         Args:
             ticker: Stock ticker (e.g., 'SPY', '^GSPC', '^VIX')
@@ -34,7 +36,12 @@ class MarketDataManager:
         if ticker == '^VIX':
             return self.yahoo_finance.fetch_ticker(ticker, period=period, **kwargs)
         
-        # 2. Always try Alpha Vantage first (attempt fetch, don't use cache unless fetch fails)
+        # 2. Check if data is up to date (has yesterday's close)
+        if self.alpha_vantage._has_yesterdays_data(ticker):
+            # Data is up to date, use cache without attempting fetch
+            return self.alpha_vantage.fetch_ticker(ticker, period=period, use_cache=True)
+        
+        # 3. Data is stale or missing, try Alpha Vantage fetch first
         alpha_vantage_error = None
         try:
             return self.alpha_vantage.fetch_ticker(ticker, period=period, use_cache=False)
@@ -42,7 +49,7 @@ class MarketDataManager:
             alpha_vantage_error = e
             print(f"  ⚠ Alpha Vantage failed for {ticker}: {e}, trying Yahoo Finance")
         
-        # 3. Fallback to Yahoo Finance (will attempt fetch, fall back to cache if fetch fails)
+        # 4. Fallback to Yahoo Finance
         yahoo_error = None
         try:
             return self.yahoo_finance.fetch_ticker(ticker, period=period, **kwargs)
@@ -50,7 +57,7 @@ class MarketDataManager:
             yahoo_error = e
             print(f"  ⚠ Yahoo Finance failed for {ticker}: {e}, trying cached data")
         
-        # 4. Last resort: Try to use cached data from Alpha Vantage
+        # 5. Last resort: Try to use stale cached data from Alpha Vantage
         try:
             return self.alpha_vantage.fetch_ticker(ticker, period=period, use_cache=True, allow_stale=True)
         except Exception as cache_err:

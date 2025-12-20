@@ -245,7 +245,12 @@ class ValuationCategory(BaseCategory):
             max_points=25.0,
             description='Assesses whether stocks are expensive relative to fundamentals through forward P/E ratios, the Buffett Indicator (market cap/GDP), and equity yield vs risk-free rates.',
             update_frequency='Daily (P/E, Equity Yield), Quarterly (Buffett Indicator)',
-            data_sources=['Yahoo Finance: ^GSPC', 'FRED: DDDM01USA156NWDB', 'FRED: DTB3', 'FRED: DTB6'],
+            data_sources=[
+                'Yahoo Finance: SPY (P/E ratio fundamental data)',
+                'FRED: DDDM01USA156NWDB (Buffett Indicator)',
+                'FRED: DTB3 (3-month T-bill rate)',
+                'FRED: DTB6 (6-month T-bill rate)'
+            ],
             next_update='Daily (after market close)'
         )
 
