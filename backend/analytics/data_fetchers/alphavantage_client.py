@@ -209,44 +209,194 @@ class AlphaVantageClient:
         # Map symbol and determine API function
         symbol, function = self._map_symbol(ticker)
         
-        # Check cache first
-        if use_cache:
-            if self._has_yesterdays_data(ticker):
-                # Load from most recent cache
-                safe_ticker = ticker.replace('^', '').replace('/', '_')
-                cache_files = sorted(self.cache_dir.glob(f"{safe_ticker}_*.json"), reverse=True)
-                if cache_files:
+        # Check if data is up to date (has yesterday's close) - only if cache is enabled
+        data_is_up_to_date = use_cache and self._has_yesterdays_data(ticker)
+        
+        # Always attempt to fetch fresh data first if budget allows
+        # If use_cache=False, never use cache (let caller handle fallback)
+        # If use_cache=True, use cache only if fetch fails
+        if self._check_api_budget():
+            try:
+                # Attempt to fetch fresh data
+                outputsize = self._period_to_outputsize(period)
+                
+                for attempt in range(self.max_retries):
                     try:
-                        with open(cache_files[0]) as f:
-                            cache_data = json.load(f)
+                        if attempt > 0:
+                            print(f"  ↻ Retry {attempt}/{self.max_retries - 1} for {ticker}")
+                            time.sleep(self.retry_delay * attempt)
                         
-                        # Reconstruct DataFrame
-                        data_list = []
-                        dates = []
-                        for row in cache_data['data']:
-                            date_str = row['Date'].split('T')[0] if 'T' in row['Date'] else row['Date']
-                            dates.append(date_str)
-                            data_list.append({
-                                'Open': row.get('Open'),
-                                'High': row.get('High'),
-                                'Low': row.get('Low'),
-                                'Close': row.get('Close'),
-                                'Volume': row.get('Volume'),
-                                'Adj Close': row.get('Adj Close', row.get('Close'))
+                        print(f"  Fetching {ticker} from Alpha Vantage...")
+                        
+                        # Rate limit
+                        self._rate_limit()
+                        
+                        # Build API URL - use TIME_SERIES_DAILY for free tier
+                        url = f"https://www.alphavantage.co/query"
+                        params = {
+                            'function': 'TIME_SERIES_DAILY',  # Free tier endpoint
+                            'symbol': symbol,
+                            'apikey': self.api_key,
+                            'outputsize': outputsize
+                        }
+                        
+                        response = requests.get(url, params=params, timeout=30)
+                        response.raise_for_status()
+                        data = response.json()
+                        
+                        # Check for API errors
+                        if 'Error Message' in data:
+                            error_msg = data['Error Message']
+                            raise ValueError(f"Alpha Vantage API error: {error_msg}")
+                        if 'Note' in data:
+                            note = data['Note']
+                            raise ValueError(f"Alpha Vantage API rate limit: {note}")
+                        
+                        # Extract time series data
+                        time_series_key = 'Time Series (Daily)'
+                        
+                        if time_series_key not in data:
+                            # Debug: Show what keys we actually got
+                            available_keys = [k for k in data.keys() if 'Time Series' in k or 'time' in k.lower()]
+                            error_msg = f"No time series data in response for {ticker}. Available keys: {list(data.keys())}"
+                            if available_keys:
+                                error_msg += f" (Found similar keys: {available_keys})"
+                            raise ValueError(error_msg)
+                        
+                        time_series = data[time_series_key]
+                        
+                        # Convert to DataFrame
+                        records = []
+                        for date_str, values in time_series.items():
+                            # Both INDEX_DAILY and TIME_SERIES_DAILY use same format: 1. open, 2. high, 3. low, 4. close, 5. volume
+                            # TIME_SERIES_DAILY doesn't have adjusted close (that's premium), so we use close for both
+                            records.append({
+                                'Date': date_str,
+                                'Open': float(values.get('1. open', 0)),
+                                'High': float(values.get('2. high', 0)),
+                                'Low': float(values.get('3. low', 0)),
+                                'Close': float(values.get('4. close', 0)),
+                                'Volume': int(float(values.get('5. volume', 0))),
+                                'Adj Close': float(values.get('4. close', 0))  # Use close as adj close (no adjustment in free tier)
                             })
                         
-                        df = pd.DataFrame(data_list, index=dates)
-                        df.index = pd.to_datetime(df.index)
+                        # Sort by date (oldest first)
+                        records.sort(key=lambda x: x['Date'])
                         
-                        print(f"  ✓ Using cached {ticker} (through {df.index[-1].date()})")
+                        df = pd.DataFrame(records)
+                        df['Date'] = pd.to_datetime(df['Date'])
+                        df.set_index('Date', inplace=True)
+                        
+                        # Rename columns to match yfinance format
+                        df.columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close']
+                        
+                        # Cache the data
+                        cache_date = datetime.now().strftime('%Y-%m-%d')
+                        cache_path = self._get_cache_path(ticker, cache_date)
+                        
+                        cache_data = {
+                            'ticker': ticker,
+                            'period': period,
+                            'interval': interval,
+                            'data': [{
+                                'Date': d.isoformat(),
+                                'Open': self._sanitize_value(row['Open']),
+                                'High': self._sanitize_value(row['High']),
+                                'Low': self._sanitize_value(row['Low']),
+                                'Close': self._sanitize_value(row['Close']),
+                                'Volume': self._sanitize_value(row['Volume']),
+                                'Adj Close': self._sanitize_value(row['Adj Close'])
+                            } for d, row in df.iterrows()]
+                        }
+                        
+                        with open(cache_path, 'w') as f:
+                            json.dump(cache_data, f)
+                        
+                        # Increment API budget
+                        self._increment_api_budget()
+                        
+                        print(f"  ✓ Fetched and cached {ticker} ({len(df)} data points)")
                         return df
+                        
                     except Exception as e:
-                        print(f"  ⚠ Cache read error: {e}, fetching fresh data")
+                        if attempt < self.max_retries - 1:
+                            continue
+                        # If fetch failed and cache is enabled and we have up-to-date cache, use it
+                        if use_cache and data_is_up_to_date:
+                            break  # Fall through to cache usage below
+                        # Otherwise, raise error (caller will handle fallback)
+                        raise ValueError(f"Failed to fetch {ticker} from Alpha Vantage: {e}")
+                
+                # If we get here, fetch failed but cache is enabled and data is up to date
+                if use_cache and data_is_up_to_date:
+                    safe_ticker = ticker.replace('^', '').replace('/', '_')
+                    cache_files = sorted(self.cache_dir.glob(f"{safe_ticker}_*.json"), reverse=True)
+                    if cache_files:
+                        try:
+                            with open(cache_files[0]) as f:
+                                cache_data = json.load(f)
+                            
+                            # Reconstruct DataFrame
+                            data_list = []
+                            dates = []
+                            for row in cache_data['data']:
+                                date_str = row['Date'].split('T')[0] if 'T' in row['Date'] else row['Date']
+                                dates.append(date_str)
+                                data_list.append({
+                                    'Open': row.get('Open'),
+                                    'High': row.get('High'),
+                                    'Low': row.get('Low'),
+                                    'Close': row.get('Close'),
+                                    'Volume': row.get('Volume'),
+                                    'Adj Close': row.get('Adj Close', row.get('Close'))
+                                })
+                            
+                            df = pd.DataFrame(data_list, index=dates)
+                            df.index = pd.to_datetime(df.index)
+                            
+                            print(f"  ✓ Using cached {ticker} (fetch failed, through {df.index[-1].date()})")
+                            return df
+                        except Exception as e:
+                            print(f"  ⚠ Cache read error: {e}")
+                    raise ValueError(f"Failed to fetch {ticker} and cache read failed")
+            except Exception as e:
+                # If fetch failed and cache is enabled and we have up-to-date cache, use it
+                if use_cache and data_is_up_to_date:
+                    safe_ticker = ticker.replace('^', '').replace('/', '_')
+                    cache_files = sorted(self.cache_dir.glob(f"{safe_ticker}_*.json"), reverse=True)
+                    if cache_files:
+                        try:
+                            with open(cache_files[0]) as f:
+                                cache_data = json.load(f)
+                            
+                            # Reconstruct DataFrame
+                            data_list = []
+                            dates = []
+                            for row in cache_data['data']:
+                                date_str = row['Date'].split('T')[0] if 'T' in row['Date'] else row['Date']
+                                dates.append(date_str)
+                                data_list.append({
+                                    'Open': row.get('Open'),
+                                    'High': row.get('High'),
+                                    'Low': row.get('Low'),
+                                    'Close': row.get('Close'),
+                                    'Volume': row.get('Volume'),
+                                    'Adj Close': row.get('Adj Close', row.get('Close'))
+                                })
+                            
+                            df = pd.DataFrame(data_list, index=dates)
+                            df.index = pd.to_datetime(df.index)
+                            
+                            print(f"  ✓ Using cached {ticker} (fetch failed, through {df.index[-1].date()})")
+                            return df
+                        except Exception as cache_err:
+                            print(f"  ⚠ Cache read error: {cache_err}")
+                raise ValueError(f"Failed to fetch {ticker} from Alpha Vantage: {e}")
         
         # Check API budget
         if not self._check_api_budget():
-            if allow_stale:
-                # Try to use stale cache
+            # If cache is enabled and stale cache is allowed, try to use it
+            if use_cache and allow_stale:
                 safe_ticker = ticker.replace('^', '').replace('/', '_')
                 cache_files = sorted(self.cache_dir.glob(f"{safe_ticker}_*.json"), reverse=True)
                 if cache_files:
@@ -273,113 +423,11 @@ class AlphaVantageClient:
                         return df
                     except Exception:
                         pass
-            raise ValueError(f"API budget exhausted and no stale cache available for {ticker}")
+            # If cache is disabled or no cache available, raise error
+            raise ValueError(f"API budget exhausted for {ticker}")
         
-        # Fetch from API
-        outputsize = self._period_to_outputsize(period)
-        
-        for attempt in range(self.max_retries):
-            try:
-                if attempt > 0:
-                    print(f"  ↻ Retry {attempt}/{self.max_retries - 1} for {ticker}")
-                    time.sleep(self.retry_delay * attempt)
-                
-                print(f"  Fetching {ticker} from Alpha Vantage...")
-                
-                # Rate limit
-                self._rate_limit()
-                
-                # Build API URL - use TIME_SERIES_DAILY for free tier
-                url = f"https://www.alphavantage.co/query"
-                params = {
-                    'function': 'TIME_SERIES_DAILY',  # Free tier endpoint
-                    'symbol': symbol,
-                    'apikey': self.api_key,
-                    'outputsize': outputsize
-                }
-                
-                response = requests.get(url, params=params, timeout=30)
-                response.raise_for_status()
-                data = response.json()
-                
-                # Check for API errors
-                if 'Error Message' in data:
-                    error_msg = data['Error Message']
-                    raise ValueError(f"Alpha Vantage API error: {error_msg}")
-                if 'Note' in data:
-                    note = data['Note']
-                    raise ValueError(f"Alpha Vantage API rate limit: {note}")
-                
-                # Extract time series data
-                time_series_key = 'Time Series (Daily)'
-                
-                if time_series_key not in data:
-                    # Debug: Show what keys we actually got
-                    available_keys = [k for k in data.keys() if 'Time Series' in k or 'time' in k.lower()]
-                    error_msg = f"No time series data in response for {ticker}. Available keys: {list(data.keys())}"
-                    if available_keys:
-                        error_msg += f" (Found similar keys: {available_keys})"
-                    raise ValueError(error_msg)
-                
-                time_series = data[time_series_key]
-                
-                # Convert to DataFrame
-                records = []
-                for date_str, values in time_series.items():
-                    # Both INDEX_DAILY and TIME_SERIES_DAILY use same format: 1. open, 2. high, 3. low, 4. close, 5. volume
-                    # TIME_SERIES_DAILY doesn't have adjusted close (that's premium), so we use close for both
-                    records.append({
-                        'Date': date_str,
-                        'Open': float(values.get('1. open', 0)),
-                        'High': float(values.get('2. high', 0)),
-                        'Low': float(values.get('3. low', 0)),
-                        'Close': float(values.get('4. close', 0)),
-                        'Volume': int(float(values.get('5. volume', 0))),
-                        'Adj Close': float(values.get('4. close', 0))  # Use close as adj close (no adjustment in free tier)
-                    })
-                
-                # Sort by date (oldest first)
-                records.sort(key=lambda x: x['Date'])
-                
-                df = pd.DataFrame(records)
-                df['Date'] = pd.to_datetime(df['Date'])
-                df.set_index('Date', inplace=True)
-                
-                # Rename columns to match yfinance format
-                df.columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close']
-                
-                # Cache the data
-                cache_date = datetime.now().strftime('%Y-%m-%d')
-                cache_path = self._get_cache_path(ticker, cache_date)
-                
-                cache_data = {
-                    'ticker': ticker,
-                    'period': period,
-                    'interval': interval,
-                    'data': [{
-                        'Date': d.isoformat(),
-                        'Open': self._sanitize_value(row['Open']),
-                        'High': self._sanitize_value(row['High']),
-                        'Low': self._sanitize_value(row['Low']),
-                        'Close': self._sanitize_value(row['Close']),
-                        'Volume': self._sanitize_value(row['Volume']),
-                        'Adj Close': self._sanitize_value(row['Adj Close'])
-                    } for d, row in df.iterrows()]
-                }
-                
-                with open(cache_path, 'w') as f:
-                    json.dump(cache_data, f)
-                
-                # Increment API budget
-                self._increment_api_budget()
-                
-                print(f"  ✓ Fetched and cached {ticker} ({len(df)} data points)")
-                return df
-                
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    continue
-                raise ValueError(f"Failed to fetch {ticker} from Alpha Vantage: {e}")
+        # If we get here, budget is exhausted and cache is disabled
+        raise ValueError(f"API budget exhausted for {ticker}")
 
 
 def main():

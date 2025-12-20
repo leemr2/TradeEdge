@@ -19,7 +19,8 @@ class MarketDataManager:
     
     def fetch_ticker(self, ticker: str, period: str = "1y", **kwargs) -> pd.DataFrame:
         """
-        Simplified smart fetch: VIX uses Yahoo, others check cache → Alpha Vantage → Yahoo fallback
+        Smart fetch: Always attempts Alpha Vantage first, then Yahoo Finance, then cache only if both fail.
+        Workflow: Alpha Vantage → Yahoo Finance → Cache (only if both fail)
         
         Args:
             ticker: Stock ticker (e.g., 'SPY', '^GSPC', '^VIX')
@@ -33,19 +34,29 @@ class MarketDataManager:
         if ticker == '^VIX':
             return self.yahoo_finance.fetch_ticker(ticker, period=period, **kwargs)
         
-        # 2. Check if we already have yesterday's close data
-        if self.alpha_vantage._has_yesterdays_data(ticker):
-            return self.alpha_vantage.fetch_ticker(ticker, period=period, use_cache=True)
+        # 2. Always try Alpha Vantage first (attempt fetch, don't use cache unless fetch fails)
+        alpha_vantage_error = None
+        try:
+            return self.alpha_vantage.fetch_ticker(ticker, period=period, use_cache=False)
+        except Exception as e:
+            alpha_vantage_error = e
+            print(f"  ⚠ Alpha Vantage failed for {ticker}: {e}, trying Yahoo Finance")
         
-        # 3. Try Alpha Vantage if budget allows
-        if self.alpha_vantage._check_api_budget():
-            try:
-                return self.alpha_vantage.fetch_ticker(ticker, period=period)
-            except Exception as e:
-                print(f"  ⚠ Alpha Vantage failed for {ticker}: {e}, trying Yahoo Finance")
+        # 3. Fallback to Yahoo Finance (will attempt fetch, fall back to cache if fetch fails)
+        yahoo_error = None
+        try:
+            return self.yahoo_finance.fetch_ticker(ticker, period=period, **kwargs)
+        except Exception as e:
+            yahoo_error = e
+            print(f"  ⚠ Yahoo Finance failed for {ticker}: {e}, trying cached data")
         
-        # 4. Fallback to Yahoo Finance
-        return self.yahoo_finance.fetch_ticker(ticker, period=period, **kwargs)
+        # 4. Last resort: Try to use cached data from Alpha Vantage
+        try:
+            return self.alpha_vantage.fetch_ticker(ticker, period=period, use_cache=True, allow_stale=True)
+        except Exception as cache_err:
+            print(f"  ⚠ Cache read failed for {ticker}: {cache_err}")
+            # Re-raise the most recent error (Yahoo Finance if available, otherwise Alpha Vantage)
+            raise yahoo_error if yahoo_error else alpha_vantage_error
     
     def get_latest_price(self, ticker: str) -> Optional[float]:
         """

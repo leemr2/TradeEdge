@@ -292,7 +292,7 @@ class YFinanceClient:
         if skip_on_rate_limit:
             return {}
         
-        # Try only once with short timeout
+        # Always attempt to fetch first - only use fallback if fetch fails
         try:
             self._rate_limit()
             
@@ -311,7 +311,7 @@ class YFinanceClient:
             except Exception as e:
                 error_msg = str(e)
                 if "429" in error_msg or "Too Many Requests" in error_msg or "Max retries exceeded" in error_msg:
-                    print(f"  ⚠ Rate limited for {ticker} - skipping")
+                    print(f"  ⚠ Rate limited for {ticker} - fetch failed, will use fallback")
                 else:
                     print(f"  ⚠ Could not get info for {ticker}: {type(e).__name__}")
                 return {}
