@@ -13,8 +13,14 @@ pip install -r requirements.txt
 2. Set up environment variables:
 ```bash
 cp .env.example .env
-# Edit .env and add your FRED_API_KEY
+# Edit .env and add your API keys:
+# FRED_API_KEY=your_fred_api_key_here
+# ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
 ```
+
+**Get API Keys:**
+- FRED API key: https://fred.stlouisfed.org/docs/api/api_key.html
+- Alpha Vantage API key: https://www.alphavantage.co/support/#api-key (free tier: 25 calls/day)
 
 3. Train the Volatility Predictor model (first time only):
 ```bash
@@ -56,6 +62,10 @@ The API will be available at `http://localhost:8000`
     "as_of": "2025-12-09"
   }
   ```
+
+### API Budget Monitoring
+- `GET /api/budget` - Get Alpha Vantage API call usage for today
+  Returns: `{used: int, limit: 25, remaining: int, resets_at: string}`
 
 ## FRS Architecture
 
@@ -101,17 +111,17 @@ Each category can be tested independently:
 ```python
 # Example: Test Macro/Cycle category
 from analytics.data_fetchers.fred_client import FredClient
-from analytics.data_fetchers.yfinance_client import YFinanceClient
+from analytics.data_fetchers.market_data_manager import MarketDataManager
 from analytics.core.categories.macro_cycle import MacroCycleCategory
 from analytics.core.manual_inputs import load_manual_inputs
 
 fred = FredClient()
-yfinance = YFinanceClient()
+market_data = MarketDataManager()  # Uses Alpha Vantage primary, Yahoo fallback
 manual_inputs = load_manual_inputs()
 
 macro = MacroCycleCategory(
     fred_client=fred,
-    yfinance_client=yfinance,
+    market_data=market_data,
     manual_inputs=manual_inputs
 )
 
@@ -208,23 +218,71 @@ curl -X POST http://localhost:8000/api/frs/manual-inputs \
 **Update via File:**
 Edit `data/config/manual_inputs.json` directly (will be loaded on next FRS calculation).
 
-## Data Caching
+## Data Sources & Caching
 
-All data is cached locally in `data/cache/`:
-- FRED data: `data/cache/fred/` (7-day TTL)
-- Yahoo Finance data: `data/cache/yfinance/` (24-hour TTL)
-- Trained models: `data/cache/models/`
-- Configuration: `data/config/manual_inputs.json`
+### Primary: Alpha Vantage
+- **Free tier**: 25 API calls/day
+- **Used for**: SPY, QQQ, RSP, IWM, KRE, ^GSPC (via SPY proxy)
+- **Cache**: `data/cache/alphavantage/` (smart daily caching - checks for yesterday's close)
+- **Budget tracking**: Automatically tracks daily API usage
+- **Endpoint**: `TIME_SERIES_DAILY` (free tier)
+
+### Fallback: Yahoo Finance
+- **Used for**: ^VIX (not available in Alpha Vantage free tier)
+- **Fallback**: If Alpha Vantage fails or budget exhausted
+- **Cache**: `data/cache/yfinance/` (24-hour TTL)
+
+### Other Data Sources
+- **FRED API**: Economic indicators (`data/cache/fred/`, 7-day TTL)
+- **Google Trends**: Sentiment data (cached)
+- **Trained models**: `data/cache/models/`
+- **Configuration**: `data/config/manual_inputs.json`
+
+### Smart Caching Logic
+- Checks if data through **yesterday's close** exists before fetching
+- Only fetches new data when needed (perfect for weekly usage)
+- Falls back to Yahoo Finance if Alpha Vantage unavailable
+- Uses stale cache with warning if both sources fail
+
+### API Budget Management
+Monitor daily API usage:
+```bash
+curl http://localhost:8000/api/budget
+```
+
+Typical usage: 6-7 calls/day (well under 25 limit)
 
 ## Category Update Frequencies
 
 | Category | Update Frequency | Data Sources |
 |----------|-----------------|--------------|
 | Macro/Cycle | Mixed | FRED (monthly/daily/quarterly) |
-| Valuation | Daily/Quarterly | Yahoo Finance, FRED |
-| Leverage & Stability | Daily/Semi-annual/Quarterly | FRED, Manual (Fed FSR, FDIC) |
-| Earnings & Margins | Real-time | Yahoo Finance |
-| Sentiment | Real-time | Yahoo Finance (VIX) |
+| Valuation | Daily/Quarterly | Alpha Vantage (primary), Yahoo Finance (fallback), FRED |
+| Leverage & Stability | Daily/Semi-annual/Quarterly | Alpha Vantage (primary), FRED, Manual (Fed FSR, FDIC) |
+| Earnings & Margins | Real-time | Alpha Vantage (primary), Yahoo Finance (fallback) |
+| Sentiment | Real-time | Yahoo Finance (VIX only) |
+
+**Data Source Priority:**
+1. **Alpha Vantage** - Primary for SPY, QQQ, RSP, IWM, KRE, ^GSPC
+2. **Yahoo Finance** - Primary for ^VIX, fallback for others
+3. **FRED** - Economic indicators (unemployment, yield curve, GDP, etc.)
 
 See `backend/FRS Category Reference Guide.md` for detailed update schedules and data source information.
+
+## Data Fetcher Architecture
+
+```
+backend/analytics/data_fetchers/
+├── fred_client.py              # FRED API wrapper
+├── alphavantage_client.py      # Alpha Vantage API wrapper (primary)
+├── yfinance_client.py          # Yahoo Finance wrapper (fallback)
+└── market_data_manager.py      # Unified data source manager
+```
+
+The `MarketDataManager` provides a unified interface that:
+- Routes ^VIX requests to Yahoo Finance
+- Uses Alpha Vantage for all other tickers
+- Automatically falls back to Yahoo Finance if Alpha Vantage fails
+- Implements smart daily caching (checks for yesterday's close)
+- Tracks API budget usage
 

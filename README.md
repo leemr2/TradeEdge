@@ -16,6 +16,7 @@ TradeEdge combines:
 - Python 3.11+
 - Node.js 18+
 - FRED API key (get from https://fred.stlouisfed.org/docs/api/api_key.html)
+- Alpha Vantage API key (get free key from https://www.alphavantage.co/support/#api-key)
 
 ### Backend Setup
 
@@ -41,9 +42,12 @@ $env:FRED_API_KEY="your_fred_api_key_here"
 Create a `.env` file in the `backend/` directory:
 ```
 FRED_API_KEY=your_fred_api_key_here
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key_here
 ```
 
 Then install python-dotenv (already in requirements.txt) and the code will automatically load it.
+
+**Note:** Alpha Vantage free tier provides 25 API calls per day. The system intelligently caches data and only fetches when needed, staying well within this limit.
 
 3. Train the Volatility Predictor model (first time only):
 ```bash
@@ -105,7 +109,11 @@ tradeedge/
 │   │   │       └── sentiment.py         # Category 5: Sentiment
 │   │   └── data_fetchers/
 │   │       ├── fred_client.py          # FRED API wrapper
-│   │       └── yfinance_client.py      # Yahoo Finance wrapper
+│   │       ├── alphavantage_client.py  # Alpha Vantage API wrapper (primary)
+│   │       ├── yfinance_client.py      # Yahoo Finance wrapper (fallback)
+│   │       └── market_data_manager.py  # Unified data source manager
+│   │   └── utils/
+│   │       └── api_budget_tracker.py   # API call budget tracking
 │   ├── api/
 │   │   └── main.py                     # FastAPI application
 │   ├── tests/                          # Unit tests
@@ -149,15 +157,15 @@ The FRS calculator is now modular. Test individual categories:
 ```python
 # Example: Test Macro/Cycle category
 from analytics.data_fetchers.fred_client import FredClient
-from analytics.data_fetchers.yfinance_client import YFinanceClient
+from analytics.data_fetchers.market_data_manager import MarketDataManager
 from analytics.core.categories.macro_cycle import MacroCycleCategory
 from analytics.core.manual_inputs import load_manual_inputs
 
 fred = FredClient()
-yfinance = YFinanceClient()
+market_data = MarketDataManager()  # Uses Alpha Vantage primary, Yahoo fallback
 manual_inputs = load_manual_inputs()
 
-macro = MacroCycleCategory(fred_client=fred, yfinance_client=yfinance, manual_inputs=manual_inputs)
+macro = MacroCycleCategory(fred_client=fred, market_data=market_data, manual_inputs=manual_inputs)
 result = macro.calculate()
 print(result)
 ```
@@ -181,6 +189,10 @@ print(result)
     "as_of": "2025-12-09"
   }
   ```
+
+### API Budget Monitoring
+- `GET /api/budget` - Get Alpha Vantage API call usage for today
+  Returns: `{used: int, limit: 25, remaining: int, resets_at: string}`
 
 ## Development
 
@@ -232,13 +244,32 @@ The Volatility Predictor model should be retrained weekly:
 python scripts/train_vp_model.py
 ```
 
-### Data Caching
+### Data Sources & Caching
 
-All external API data is cached locally:
-- FRED data: `data/cache/fred/` (7-day TTL)
-- Yahoo Finance: `data/cache/yfinance/` (24-hour TTL)
+TradeEdge uses a smart multi-source data fetching strategy:
+
+**Primary Data Source: Alpha Vantage**
+- Free tier: 25 API calls/day
+- Used for: SPY, QQQ, RSP, IWM, KRE, ^GSPC (via SPY proxy)
+- Cache: `data/cache/alphavantage/` (daily, checks for yesterday's close)
+- Budget tracking: Automatically tracks daily API usage
+
+**Fallback Data Source: Yahoo Finance**
+- Used for: ^VIX (not available in Alpha Vantage free tier)
+- Fallback: If Alpha Vantage fails or budget exhausted
+- Cache: `data/cache/yfinance/` (24-hour TTL)
+
+**Other Data Sources:**
+- FRED API: Economic indicators (`data/cache/fred/`, 7-day TTL)
+- Google Trends: Sentiment data (cached)
 - Trained models: `data/cache/models/`
 - Configuration: `data/config/manual_inputs.json`
+
+**Smart Caching Logic:**
+- Checks if data through yesterday's close exists before fetching
+- Only fetches new data when needed (perfect for weekly usage)
+- Falls back to Yahoo Finance if Alpha Vantage unavailable
+- Uses stale cache with warning if both sources fail
 
 ### FRS Category Architecture
 
@@ -264,6 +295,7 @@ See `backend/FRS Category Reference Guide.md` for complete documentation.
 - **FastAPI Backend**: HTTP wrapper around Python modules
 - **Next.js Frontend**: React dashboard with real-time data visualization
 - **Local-First**: All data cached locally for privacy and speed
+- **Smart Data Fetching**: Alpha Vantage primary with Yahoo Finance fallback, intelligent daily caching
 
 ## License
 

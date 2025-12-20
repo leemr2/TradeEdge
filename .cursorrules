@@ -16,9 +16,13 @@
 
 3. **Data Caching**: All external API calls must be cached:
    - Cache location: `data/cache/{source}/{series}_{date}.json`
-   - Cache TTL: Daily for market data, weekly for economic data
+   - Cache TTL:
+     - Alpha Vantage: Smart daily caching (only fetches if data through yesterday missing)
+     - Yahoo Finance: 24-hour TTL
+     - FRED: 7-day TTL
    - Always check cache before making API calls
    - Include cache hit/miss logging
+   - Use `MarketDataManager` for unified market data access with intelligent routing
 
 4. **Error Handling**: 
    - Never fail silently - log warnings/errors
@@ -42,9 +46,16 @@
 - Test with known inputs and verify JSON structure
 
 ### Data Sources
-- FRED API: Use `fredapi` library, cache responses
-- Yahoo Finance: Use `yfinance` library, cache daily data
-- Google Trends: Use `pytrends` library, handle rate limits
+- **Alpha Vantage** (Primary): Use `alpha_vantage` library, smart daily caching, 25 calls/day limit
+  - Track budget via `api_budget_tracker.py`
+  - Symbol mapping: ^GSPC → SPY, ^VIX → Yahoo Finance
+  - Endpoint: TIME_SERIES_DAILY (free tier)
+- **FRED API**: Use `fredapi` library, cache responses (7-day TTL)
+- **Yahoo Finance** (Fallback): Use `yfinance` library, cache daily data (24-hour TTL)
+  - Automatic fallback when Alpha Vantage fails or budget exhausted
+- **Google Trends**: Use `pytrends` library, handle rate limits (planned for VP)
+
+See `ALPHA_VANTAGE_INTEGRATION_2025-12-19.md` for market data routing strategy.
 
 ## CMDS Calculation Formula
 
@@ -126,6 +137,57 @@ Allocation zones:
 5. Integrate into frontend
 6. Write tests
 
+## Documentation Maintenance
+
+**CRITICAL**: When making major changes, update documentation to keep it synchronized with the codebase.
+
+### Update Documentation When You:
+- Add/remove/modify data sources (e.g., Alpha Vantage integration)
+- Change architecture patterns (e.g., new caching strategy, routing logic)
+- Add/modify core features (e.g., new FRS categories, API endpoints)
+- Change environment requirements (e.g., new API keys, dependencies)
+- Fix significant bugs that reveal important gotchas
+- Add new modules or major components
+- Modify file organization or structure
+
+### Documentation Files to Update:
+
+**Always Update**:
+- `CLAUDE.md` - AI agent guidance (Tech Stack, API Endpoints, Gotchas, Workflows)
+- `README.md` - User-facing quick start (if setup/testing changed)
+- `backend/README.md` - Backend-specific docs (if API/testing changed)
+
+**Create New Documentation**:
+- Major integrations: `INTEGRATION_NAME_YYYY-MM-DD.md` (what, why, how, troubleshooting)
+- Complex bug fixes: `BUG_FIX_DESCRIPTION_YYYY-MM-DD.md` (issue, cause, solution)
+
+**Conditionally Update**:
+- `.cursorrules` (this file) - If coding standards changed
+- `PRD.md` - Only if product vision changed (rare)
+- Architecture docs - Only if system design changed
+
+### Documentation Process:
+1. During development: Note what changed and why
+2. Before committing: Review documentation checklist
+3. Update relevant files with specific details (file paths, examples)
+4. Add cross-references in CLAUDE.md's "Documentation References"
+5. Test that commands/examples in docs still work
+
+### Documentation Quality:
+- Be concise: What changed and how to use it
+- Be specific: Include file paths, function names, code examples
+- Be current: Include dates and versions
+- Be practical: Focus on actionable developer information
+- Cross-reference: Link related documentation
+- Test your docs: Verify commands actually work
+
+### Good Examples:
+- Alpha Vantage integration: Created dated MD, updated CLAUDE.md, README.md, backend/README.md
+- yfinance fixes: Created dated MD documenting issue/solution, updated CLAUDE.md gotchas
+- New FRS category: Updated CLAUDE.md, backend/README.md, category reference guide
+
+**Remember**: Documentation is code. Keep it synchronized with implementation.
+
 ## Important Notes
 
 - Never modify the plan file itself
@@ -134,4 +196,5 @@ Allocation zones:
 - Log important operations for debugging
 - Use environment variables for API keys
 - Never commit API keys or sensitive data
+- **UPDATE DOCUMENTATION for major changes** (see Documentation Maintenance above)
 
