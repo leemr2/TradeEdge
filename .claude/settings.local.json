@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m analytics.core.categories.macro_cycle:*)",
+      "Bash(python test_macro_enhanced.py:*)",
+      "Bash(python -m analytics.core.frs_calculator:*)",
+      "Bash(python validate_macro_enhanced.py:*)",
+      "Bash(python simple_validate.py:*)",
+      "Bash(npm run build:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -41,6 +41,7 @@ export interface CategoryDetail {
   score: number;
   max: number;
   min?: number;
+  risk_level?: string; // NEW: For macro_cycle category (LOW, MODERATE, ELEVATED, SEVERE)
   components: Record<string, ComponentScore>;
   metadata: CategoryMetadata;
 }

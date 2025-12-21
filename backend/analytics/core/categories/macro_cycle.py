@@ -13,36 +13,67 @@ class MacroCycleCategory(BaseCategory):
     """Category 1: Macro/Cycle Risk Assessment"""
     
     def calculate(self) -> Dict[str, Any]:
-        """Calculate macro/cycle category score"""
+        """Calculate enhanced macro/cycle category score (0-30 points)
+
+        Traditional indicators (20 points):
+        - Unemployment/Sahm Rule: 0-5 points (reduced from 10)
+        - Yield Curve: 0-10 points (unchanged)
+        - GDP vs Stall Speed: 0-5 points (reduced from 10)
+
+        Leading labor market quality indicators (10 points):
+        - U-6 Underemployment: 0-4 points (NEW)
+        - Labor Market Softness: 0-3 points (NEW)
+        - High-Income Sector Stress: 0-3 points (NEW)
+        """
+        # Traditional indicators (20 points)
         unemployment = self._score_unemployment_trend()
         yield_curve = self._score_yield_curve()
         gdp = self._score_gdp_vs_stall()
-        
-        total_score = min(30.0, unemployment['score'] + yield_curve['score'] + gdp['score'])
-        
+
+        # New leading indicators (10 points)
+        u6_underemployment = self._score_u6_deterioration()
+        labor_softness = self._score_labor_market_softness()
+        sector_stress = self._score_high_income_sector_stress()
+
+        total_score = min(30.0,
+            unemployment['score'] +
+            yield_curve['score'] +
+            gdp['score'] +
+            u6_underemployment['score'] +
+            labor_softness['score'] +
+            sector_stress['score']
+        )
+
+        # Determine risk level
+        risk_level = self._determine_risk_level(total_score)
+
         return {
             'score': round(total_score, 1),
             'max_points': 30.0,
+            'risk_level': risk_level,
             'components': {
                 'unemployment': unemployment,
                 'yield_curve': yield_curve,
                 'gdp': gdp,
+                'u6_underemployment': u6_underemployment,
+                'labor_market_softness': labor_softness,
+                'high_income_stress': sector_stress,
             },
             'metadata': self.get_metadata(),
         }
     
     def _score_unemployment_trend(self) -> Dict[str, Any]:
         """
-        Category 1.1: Unemployment Trend (0-10 points) - Official Sahm Rule
-        
+        Category 1.1: Unemployment Trend (0-5 points) - Official Sahm Rule
+
         Sahm Rule: Recession signal when 3-month MA of unemployment rate
         rises ≥0.5pp above its lowest level in prior 12 months.
-        
-        Scoring:
+
+        Scoring (reduced weighting from 10 to 5 points):
         0 points: Sahm indicator <0 or unemployment ≤4%
-        1-4 points: Sahm indicator 0.1-0.4pp (minor deterioration)
-        5 points: Sahm indicator 0.5-0.9pp (Sahm rule early warning)
-        10 points: Sahm indicator ≥1.0pp (Sahm rule triggered - recession signal)
+        0.5-2 points: Sahm indicator 0.1-0.4pp (minor deterioration)
+        2.5 points: Sahm indicator 0.5-0.9pp (Sahm rule early warning)
+        5 points: Sahm indicator ≥1.0pp (Sahm rule triggered - recession signal)
         """
         try:
             # Fetch at least 18 months of data to ensure complete 12-month lookback
@@ -125,19 +156,19 @@ class MacroCycleCategory(BaseCategory):
                     'data_source': 'FRED: UNRATE'
                 }
             
-            # Score based on Sahm indicator thresholds
+            # Score based on Sahm indicator thresholds (0-5 points scale)
             if sahm_indicator < 0 or current <= 4.0:
                 score = 0.0
                 interpretation = 'Unemployment flat or falling - strong labor market'
             elif 0.5 <= sahm_indicator < 1.0:
-                score = 5.0
+                score = 2.5
                 interpretation = f'Sahm rule early warning - indicator at {sahm_indicator:.2f}pp (0.5-0.9pp range)'
             elif sahm_indicator >= 1.0:
-                score = 10.0
+                score = 5.0
                 interpretation = f'Sahm rule TRIGGERED - indicator at {sahm_indicator:.2f}pp (≥1.0pp) - recession signal'
             else:  # 0 < sahm_indicator < 0.5
-                # Linear interpolation between 0 and 5 points
-                score = sahm_indicator * 10
+                # Linear interpolation between 0 and 2.5 points
+                score = sahm_indicator * 5
                 interpretation = f'Unemployment rising slightly - Sahm indicator at {sahm_indicator:.2f}pp'
             
             return {
@@ -242,10 +273,12 @@ class MacroCycleCategory(BaseCategory):
     
     def _score_gdp_vs_stall(self) -> Dict[str, Any]:
         """
-        Category 1.3: GDP vs Stall Speed (0-10 points)
+        Category 1.3: GDP vs Stall Speed (0-5 points) - reduced from 10 points
+
+        Scoring (reduced weighting):
         0 points: >2.5% YoY growth (strong expansion)
-        5 points: 1.5-2.5% growth (near stall speed)
-        10 points: <1.5% or 2+ negative quarters (recession imminent)
+        2.5 points: 1.5-2.5% growth (near stall speed)
+        5 points: <1.5% or 2+ negative quarters (recession imminent)
         """
         try:
             # Fetch Real GDP (levels, not growth rate)
@@ -276,22 +309,22 @@ class MacroCycleCategory(BaseCategory):
             
             last_updated = self._get_latest_timestamp(gdp)
             
-            # Score based on growth rate and weakness
+            # Score based on growth rate and weakness (0-5 points scale)
             if avg_growth_4q > 2.5:
                 score = 0.0
                 interpretation = f'Strong growth above trend ({avg_growth_4q:.1f}% YoY)'
             elif 1.5 <= avg_growth_4q <= 2.5:
-                score = 5.0
+                score = 2.5
                 interpretation = f'Growth slowing but not stalled ({avg_growth_4q:.1f}% YoY)'
             elif avg_growth_4q < 1.5 or negative_quarters >= 2:
-                score = 10.0
+                score = 5.0
                 if negative_quarters >= 2:
                     interpretation = f'Below stall speed ({avg_growth_4q:.1f}% YoY) with {negative_quarters} negative quarters - recession risk'
                 else:
                     interpretation = f'Below stall speed ({avg_growth_4q:.1f}% YoY) - recession risk'
             else:
                 # Linear interpolation for edge cases
-                score = min(10.0, (2.5 - avg_growth_4q) / 0.1)
+                score = min(5.0, (2.5 - avg_growth_4q) / 0.2)
                 interpretation = f'Near stall speed ({avg_growth_4q:.1f}% YoY)'
             
             return {
@@ -316,6 +349,264 @@ class MacroCycleCategory(BaseCategory):
                 'data_source': 'FRED: GDPC1'
             }
     
+    def _score_u6_deterioration(self) -> Dict[str, Any]:
+        """
+        Category 1.4: U-6 Underemployment Deterioration (0-4 points)
+
+        Tracks change in U-6 from its recent low. Rising U-6 while U-3
+        stays flat signals hidden labor market slack building.
+
+        Scoring:
+        0 points: U-6 falling or stable (healthy)
+        1.5 points: U-6 up 0.5-1.0pp from recent low
+        4 points: U-6 up >1.0pp from recent low (significant slack)
+        """
+        try:
+            # Fetch 24 months for proper baseline
+            u6 = self.fred.fetch_series('U6RATE', start_date='2023-01-01')
+
+            if len(u6) < 12:
+                return {
+                    'name': 'u6_underemployment',
+                    'score': 0.0,
+                    'value': None,
+                    'last_updated': None,
+                    'interpretation': 'Insufficient data (need 12+ months)',
+                    'data_source': 'FRED: U6RATE'
+                }
+
+            # Find trough in last 18 months
+            trough_18m = u6.iloc[-18:].min() if len(u6) >= 18 else u6.min()
+            current_u6 = u6.iloc[-1]
+
+            # Calculate deterioration
+            u6_change = current_u6 - trough_18m
+
+            # Score based on deterioration magnitude
+            if u6_change <= 0:
+                score = 0.0
+                interpretation = 'Underemployment improving or stable'
+            elif 0.5 <= u6_change < 1.0:
+                score = 1.5
+                interpretation = f'Moderate underemployment increase (+{u6_change:.1f}pp)'
+            elif u6_change >= 1.0:
+                score = 4.0
+                interpretation = f'Significant underemployment increase (+{u6_change:.1f}pp) - hidden slack building'
+            else:  # 0 < u6_change < 0.5
+                score = u6_change * 3.2  # Linear interpolation (0.5pp = 1.6pts, scaled to 4 max)
+                interpretation = f'Minor underemployment increase (+{u6_change:.1f}pp)'
+
+            return {
+                'name': 'u6_underemployment',
+                'score': round(score, 1),
+                'value': round(current_u6, 2),
+                'change_from_trough': round(u6_change, 2),
+                'trough_18m': round(trough_18m, 2),
+                'last_updated': self._get_latest_timestamp(u6),
+                'interpretation': interpretation,
+                'data_source': 'FRED: U6RATE'
+            }
+
+        except Exception as e:
+            print(f"Warning: Error scoring U-6 underemployment: {e}")
+            return {
+                'name': 'u6_underemployment',
+                'score': 0.0,
+                'value': None,
+                'last_updated': None,
+                'interpretation': f'Error: {str(e)}',
+                'data_source': 'FRED: U6RATE'
+            }
+
+    def _score_labor_market_softness(self) -> Dict[str, Any]:
+        """
+        Category 1.5: Labor Market Softness Index (0-3 points)
+
+        Combines:
+        - Job openings decline from peak (0-1.5 pts)
+        - Quit rate decline from peak (0-1.5 pts)
+
+        Scoring:
+        0 points: Openings & quits strong (expansion)
+        1-2 points: Moderate cooling (late-cycle)
+        3 points: Sharp deterioration (pre-recession)
+        """
+        try:
+            # Fetch job openings (JOLTS, monthly)
+            jolts = self.fred.fetch_series('JTSJOL', start_date='2022-01-01')
+            quits = self.fred.fetch_series('JTSQUR', start_date='2022-01-01')
+
+            if len(jolts) < 12 or len(quits) < 12:
+                return {
+                    'name': 'labor_market_softness',
+                    'score': 0.0,
+                    'value': None,
+                    'last_updated': None,
+                    'interpretation': 'Insufficient data',
+                    'data_source': 'FRED: JTSJOL, JTSQUR'
+                }
+
+            # Job Openings Component (0-1.5 points)
+            peak_openings = jolts.iloc[-24:].max() if len(jolts) >= 24 else jolts.max()
+            current_openings = jolts.iloc[-1]
+            openings_decline_pct = ((peak_openings - current_openings) / peak_openings) * 100
+
+            if openings_decline_pct < 10:
+                openings_score = 0.0
+            elif openings_decline_pct < 20:
+                openings_score = 0.5
+            elif openings_decline_pct < 30:
+                openings_score = 1.0
+            else:  # >30% decline
+                openings_score = 1.5
+
+            # Quit Rate Component (0-1.5 points)
+            peak_quits = quits.iloc[-24:].max() if len(quits) >= 24 else quits.max()
+            current_quits = quits.iloc[-1]
+            quits_decline_pct = ((peak_quits - current_quits) / peak_quits) * 100
+
+            if quits_decline_pct < 10:
+                quits_score = 0.0
+            elif quits_decline_pct < 20:
+                quits_score = 0.5
+            elif quits_decline_pct < 30:
+                quits_score = 1.0
+            else:  # >30% decline
+                quits_score = 1.5
+
+            total_score = openings_score + quits_score
+
+            # Interpretation
+            if total_score <= 0.5:
+                interpretation = 'Labor demand strong - healthy hiring environment'
+            elif total_score <= 2:
+                interpretation = f'Labor demand cooling - openings down {openings_decline_pct:.0f}%, quits down {quits_decline_pct:.0f}%'
+            else:
+                interpretation = f'Labor demand weakening sharply - pre-recession pattern (openings -{openings_decline_pct:.0f}%, quits -{quits_decline_pct:.0f}%)'
+
+            return {
+                'name': 'labor_market_softness',
+                'score': round(total_score, 1),
+                'job_openings_millions': round(current_openings / 1000, 1),
+                'openings_decline_pct': round(openings_decline_pct, 1),
+                'quit_rate_pct': round(current_quits, 2),
+                'quits_decline_pct': round(quits_decline_pct, 1),
+                'last_updated': self._get_latest_timestamp(jolts),
+                'interpretation': interpretation,
+                'data_source': 'FRED: JTSJOL, JTSQUR'
+            }
+
+        except Exception as e:
+            print(f"Warning: Error scoring labor market softness: {e}")
+            return {
+                'name': 'labor_market_softness',
+                'score': 0.0,
+                'value': None,
+                'last_updated': None,
+                'interpretation': f'Error: {str(e)}',
+                'data_source': 'FRED: JTSJOL, JTSQUR'
+            }
+
+    def _score_high_income_sector_stress(self) -> Dict[str, Any]:
+        """
+        Category 1.6: High-Income Sector Stress (0-3 points)
+
+        Tracks employment changes in:
+        - Information sector (USINFO) - proxy for tech sector
+        - Financial activities sector (USFIRE) - proxy for finance sector
+
+        Uses 3-month employment change to smooth volatility and capture trends.
+        Fully automated via FRED API - no manual data required.
+
+        Scoring:
+        0 points: Both sectors adding jobs
+        1-2 points: One sector declining moderately
+        3 points: Both sectors declining significantly (white-collar recession signal)
+        """
+        try:
+            # Fetch sector employment data (need at least 6 months for 3-month change)
+            info = self.fred.fetch_series('USINFO', start_date='2023-01-01')  # Information (tech proxy)
+            finance = self.fred.fetch_series('USFIRE', start_date='2023-01-01')  # Financial activities
+
+            if len(info) < 6 or len(finance) < 6:
+                return {
+                    'name': 'high_income_stress',
+                    'score': 0.0,
+                    'error': 'Insufficient data for 3-month change calculation',
+                    'last_updated': None,
+                    'interpretation': 'Insufficient data',
+                    'data_source': 'FRED: USINFO, USFIRE'
+                }
+
+            # Calculate 3-month change (to smooth volatility)
+            # Values are in thousands of jobs
+            info_change_3m = info.iloc[-1] - info.iloc[-4]  # Thousands of jobs
+            finance_change_3m = finance.iloc[-1] - finance.iloc[-4]
+
+            # Information sector component (0-1.5 pts)
+            if info_change_3m < -50:  # Losing >50k jobs in 3 months
+                info_score = 1.5
+            elif info_change_3m < -20:  # Losing 20-50k jobs
+                info_score = 1.0
+            elif info_change_3m < 0:  # Losing <20k jobs
+                info_score = 0.3
+            else:  # Adding jobs or flat
+                info_score = 0.0
+
+            # Finance sector component (0-1.5 pts)
+            if finance_change_3m < -30:  # Losing >30k jobs in 3 months
+                finance_score = 1.5
+            elif finance_change_3m < -10:  # Losing 10-30k jobs
+                finance_score = 1.0
+            elif finance_change_3m < 0:  # Losing <10k jobs
+                finance_score = 0.3
+            else:  # Adding jobs or flat
+                finance_score = 0.0
+
+            total_score = min(3.0, info_score + finance_score)  # Cap at 3.0
+
+            # Interpretation
+            if total_score == 0:
+                interpretation = 'High-income sectors adding jobs - no stress'
+            elif total_score <= 1.5:
+                interpretation = f'Moderate stress in high-income sectors (info: {info_change_3m/1000:.0f}k, finance: {finance_change_3m/1000:.0f}k 3-month change)'
+            else:
+                interpretation = f'Severe stress in high-income sectors - white-collar recession signal (info: {info_change_3m/1000:.0f}k, finance: {finance_change_3m/1000:.0f}k)'
+
+            return {
+                'name': 'high_income_stress',
+                'score': round(total_score, 1),
+                'info_sector_change_3m': int(info_change_3m),
+                'finance_sector_change_3m': int(finance_change_3m),
+                'info_sector_current': int(info.iloc[-1]),
+                'finance_sector_current': int(finance.iloc[-1]),
+                'last_updated': self._get_latest_timestamp(info),
+                'interpretation': interpretation,
+                'data_source': 'FRED: USINFO, USFIRE'
+            }
+
+        except Exception as e:
+            print(f"Warning: Error scoring high-income sector stress: {e}")
+            return {
+                'name': 'high_income_stress',
+                'score': 0.0,
+                'value': None,
+                'last_updated': None,
+                'interpretation': f'Error: {str(e)}',
+                'data_source': 'FRED: USINFO, USFIRE'
+            }
+
+    def _determine_risk_level(self, score: float) -> str:
+        """Map score to risk level"""
+        if score < 8:
+            return "LOW"
+        elif score < 16:
+            return "MODERATE"
+        elif score < 23:
+            return "ELEVATED"
+        else:
+            return "SEVERE"
+
     def get_metadata(self) -> CategoryMetadata:
         """Get category metadata"""
         # Calculate next unemployment report (first Friday of next month)
@@ -330,9 +621,18 @@ class MacroCycleCategory(BaseCategory):
         return CategoryMetadata(
             name='Macro/Cycle',
             max_points=30.0,
-            description='Assesses economic cycle position and proximity to recession through unemployment trends, yield curve signals, and GDP growth relative to stall speed.',
-            update_frequency='Mixed: Monthly (Unemployment), Daily (Yield Curve), Quarterly (GDP)',
-            data_sources=['FRED: UNRATE', 'FRED: T10Y2Y', 'FRED: GDPC1'],
-            next_update=f"{first_friday.strftime('%Y-%m-%d')} (Unemployment Report)"
+            description='Enhanced macro/cycle assessment with traditional recession indicators (unemployment, yield curve, GDP) plus leading labor market quality indicators (U-6 underemployment, job openings/quits, high-income sector employment trends).',
+            update_frequency='Mixed: Monthly (Unemployment, U-6, Sector Employment), Monthly+1 (JOLTS), Daily (Yield Curve), Quarterly (GDP)',
+            data_sources=[
+                'FRED: UNRATE (Unemployment)',
+                'FRED: T10Y2Y (Yield Curve)',
+                'FRED: GDPC1 (GDP)',
+                'FRED: U6RATE (U-6 Underemployment)',
+                'FRED: JTSJOL (Job Openings)',
+                'FRED: JTSQUR (Quit Rate)',
+                'FRED: USINFO (Information Sector Employment)',
+                'FRED: USFIRE (Financial Sector Employment)'
+            ],
+            next_update=f"{first_friday.strftime('%Y-%m-%d')} (Unemployment, U-6, Sector Employment)"
         )
 
