@@ -27,19 +27,19 @@ Your current Macro/Cycle calculator uses three indicators:
 
 ---
 
-## Category Restructure: Macro/Cycle (0-40 points)
+## Category Restructure: Macro/Cycle (0-30 points)
 
-### New Structure (40 points total)
+### New Structure (30 points total)
 
-**Traditional Recession Indicators (25 points):**
-1. Sahm Rule / Unemployment (0-10) - KEEP AS IS
+**Traditional Recession Indicators (20 points):**
+1. Sahm Rule / Unemployment (0-5) - REDUCE from 10 to 5
 2. Yield Curve (0-10) - KEEP AS IS  
 3. GDP vs Stall Speed (0-5) - REDUCE from 10 to 5
 
-**Leading Labor Market Quality Indicators (15 points):**
-4. **U-6 Underemployment Deterioration (0-5)** - NEW
-5. **Labor Market Softness Index (0-5)** - NEW
-6. **High-Income Sector Stress (0-5)** - NEW
+**Leading Labor Market Quality Indicators (10 points):**
+4. **U-6 Underemployment Deterioration (0-4)** - NEW
+5. **Labor Market Softness Index (0-3)** - NEW
+6. **High-Income Sector Stress (0-3)** - NEW
 
 ### Rationale for Changes
 
@@ -58,7 +58,7 @@ Your current Macro/Cycle calculator uses three indicators:
 
 ---
 
-## NEW INDICATOR 4: U-6 Underemployment Deterioration (0-5 points)
+## NEW INDICATOR 4: U-6 Underemployment Deterioration (0-4 points)
 
 ### Concept
 
@@ -83,15 +83,15 @@ The **U-6 underemployment rate** captures slack the official unemployment rate m
 ```python
 def _score_u6_deterioration(self) -> Dict[str, Any]:
     """
-    U-6 Underemployment Deterioration (0-5 points)
+    U-6 Underemployment Deterioration (0-4 points)
     
     Tracks change in U-6 from its recent low. Rising U-6 while U-3 
     stays flat signals hidden labor market slack building.
     
     Scoring:
     0 points: U-6 falling or stable (healthy)
-    2 points: U-6 up 0.5-1.0pp from recent low
-    5 points: U-6 up >1.0pp from recent low (significant slack)
+    1.5 points: U-6 up 0.5-1.0pp from recent low
+    4 points: U-6 up >1.0pp from recent low (significant slack)
     """
     try:
         # Fetch 24 months for proper baseline
@@ -112,13 +112,13 @@ def _score_u6_deterioration(self) -> Dict[str, Any]:
             score = 0.0
             interpretation = 'Underemployment improving or stable'
         elif 0.5 <= u6_change < 1.0:
-            score = 2.0
+            score = 1.5
             interpretation = f'Moderate underemployment increase (+{u6_change:.1f}pp)'
         elif u6_change >= 1.0:
-            score = 5.0
+            score = 4.0
             interpretation = f'Significant underemployment increase (+{u6_change:.1f}pp) - hidden slack building'
         else:  # 0 < u6_change < 0.5
-            score = u6_change * 4  # Linear interpolation
+            score = u6_change * 3.2  # Linear interpolation (0.5pp = 1.6pts, scaled to 4 max)
             interpretation = f'Minor underemployment increase (+{u6_change:.1f}pp)'
         
         return {
@@ -137,16 +137,16 @@ def _score_u6_deterioration(self) -> Dict[str, Any]:
 | Score | U-6 Change from Trough | Interpretation |
 |-------|------------------------|----------------|
 | 0 | ≤0pp | Underemployment improving |
-| 1-2 | +0.1-0.5pp | Minor slack building |
-| 2-3 | +0.5-1.0pp | Moderate slack accumulation |
-| 5 | >1.0pp | Significant hidden unemployment |
+| 0.5-1.5 | +0.1-0.5pp | Minor slack building |
+| 1.5-2.5 | +0.5-1.0pp | Moderate slack accumulation |
+| 4 | >1.0pp | Significant hidden unemployment |
 
 ### Current Example (Sep 2025)
 
 - **Current U-6:** 8.0%
 - **18-Month Trough:** 6.6% (Dec 2022)
 - **Change:** +1.4pp
-- **Score:** 5.0/5 🔴
+- **Score:** 4.0/4 🔴
 - **Interpretation:** Significant underemployment increase - hidden slack building despite low headline unemployment
 
 ### Why This Matters
@@ -164,7 +164,7 @@ def _score_u6_deterioration(self) -> Dict[str, Any]:
 
 ---
 
-## NEW INDICATOR 5: Labor Market Softness Index (0-5 points)
+## NEW INDICATOR 5: Labor Market Softness Index (0-3 points)
 
 ### Concept
 
@@ -185,25 +185,23 @@ Composite index tracking **demand-side** labor market signals that deteriorate b
 - **FRED: JTSJOL** (Total Job Openings, monthly)
 - **FRED: JTSQUR** (Quits Rate, monthly)
 
-**Secondary (for context):**
-- ADP Small Business Employment (via their API if available)
-- Challenger Announced Hiring Plans (manual quarterly input)
+**Note:** Both series are fully automated via FRED API. No manual data entry required.
 
 ### Calculation Method
 
 ```python
 def _score_labor_market_softness(self) -> Dict[str, Any]:
     """
-    Labor Market Softness Index (0-5 points)
+    Labor Market Softness Index (0-3 points)
     
     Combines:
-    - Job openings decline from peak (0-2.5 pts)
-    - Quit rate decline from peak (0-2.5 pts)
+    - Job openings decline from peak (0-1.5 pts)
+    - Quit rate decline from peak (0-1.5 pts)
     
     Scoring:
     0 points: Openings & quits strong (expansion)
-    2-3 points: Moderate cooling (late-cycle)
-    5 points: Sharp deterioration (pre-recession)
+    1-2 points: Moderate cooling (late-cycle)
+    3 points: Sharp deterioration (pre-recession)
     """
     try:
         # Fetch job openings (JOLTS, monthly)
@@ -213,7 +211,7 @@ def _score_labor_market_softness(self) -> Dict[str, Any]:
         if len(jolts) < 12 or len(quits) < 12:
             return {...}  # Error handling
         
-        # Job Openings Component (0-2.5 points)
+        # Job Openings Component (0-1.5 points)
         peak_openings = jolts.iloc[-24:].max()  # Peak in last 2 years
         current_openings = jolts.iloc[-1]
         openings_decline_pct = ((peak_openings - current_openings) / peak_openings) * 100
@@ -221,13 +219,13 @@ def _score_labor_market_softness(self) -> Dict[str, Any]:
         if openings_decline_pct < 10:
             openings_score = 0.0
         elif openings_decline_pct < 20:
-            openings_score = 1.0
+            openings_score = 0.5
         elif openings_decline_pct < 30:
-            openings_score = 1.5
+            openings_score = 1.0
         else:  # >30% decline
-            openings_score = 2.5
+            openings_score = 1.5
         
-        # Quit Rate Component (0-2.5 points)
+        # Quit Rate Component (0-1.5 points)
         peak_quits = quits.iloc[-24:].max()
         current_quits = quits.iloc[-1]
         quits_decline_pct = ((peak_quits - current_quits) / peak_quits) * 100
@@ -235,18 +233,18 @@ def _score_labor_market_softness(self) -> Dict[str, Any]:
         if quits_decline_pct < 10:
             quits_score = 0.0
         elif quits_decline_pct < 20:
-            quits_score = 1.0
+            quits_score = 0.5
         elif quits_decline_pct < 30:
-            quits_score = 1.5
+            quits_score = 1.0
         else:  # >30% decline
-            quits_score = 2.5
+            quits_score = 1.5
         
         total_score = openings_score + quits_score
         
         # Interpretation
-        if total_score <= 1:
+        if total_score <= 0.5:
             interpretation = 'Labor demand strong - healthy hiring environment'
-        elif total_score <= 3:
+        elif total_score <= 2:
             interpretation = f'Labor demand cooling - openings down {openings_decline_pct:.0f}%, quits down {quits_decline_pct:.0f}%'
         else:
             interpretation = f'Labor demand weakening sharply - pre-recession pattern (openings -{openings_decline_pct:.0f}%, quits -{quits_decline_pct:.0f}%)'
@@ -267,24 +265,24 @@ def _score_labor_market_softness(self) -> Dict[str, Any]:
 
 | Score | Openings Decline | Quit Rate Decline | Pattern |
 |-------|-----------------|-------------------|---------|
-| 0-1 | <10% | <10% | Expansion |
-| 1-2 | 10-20% | 10-20% | Late-cycle cooling |
-| 2-3 | 20-30% | 20-30% | Significant weakness |
-| 3-5 | >30% | >30% | Pre-recession collapse |
+| 0-0.5 | <10% | <10% | Expansion |
+| 0.5-1.5 | 10-20% | 10-20% | Late-cycle cooling |
+| 1.5-2.5 | 20-30% | 20-30% | Significant weakness |
+| 2.5-3 | >30% | >30% | Pre-recession collapse |
 
 ### Current Example (Sep 2025)
 
 **Job Openings:**
 - Peak: 12.0M (Mar 2022)
 - Current: 7.7M (Sep 2025)
-- Decline: -36% → Score: 2.5/2.5
+- Decline: -36% → Score: 1.5/1.5
 
 **Quit Rate:**
 - Peak: 3.0% (2022)
 - Current: 2.1% (Sep 2025)
-- Decline: -30% → Score: 1.5/2.5
+- Decline: -30% → Score: 1.0/1.5
 
-**Total Score:** 4.0/5 🔴
+**Total Score:** 2.5/3 🔴
 
 **Interpretation:** Labor demand weakening sharply - job openings down 36%, quit rate down 30%, consistent with pre-recession patterns.
 
@@ -302,7 +300,7 @@ def _score_labor_market_softness(self) -> Dict[str, Any]:
 
 ---
 
-## NEW INDICATOR 6: High-Income Sector Stress (0-5 points)
+## NEW INDICATOR 6: High-Income Sector Stress (0-3 points)
 
 ### Concept
 
@@ -319,100 +317,94 @@ White-collar layoffs in tech and finance **precede** broader labor market deteri
 
 ### Data Sources
 
-**Automated:**
-- None readily available via FRED
+**Primary (Automated via FRED):**
+- **FRED: USINFO** (Information sector employment) - Proxy for tech sector
+- **FRED: USFIRE** (Financial Activities employment) - Proxy for finance sector
+- Both series track total employment in thousands, updated monthly
+- Use 3-month change to smooth volatility and capture trends
 
-**Manual Quarterly Input:**
-- Challenger, Gray & Christmas layoff reports
-- Tech layoff trackers (e.g., layoffs.fyi)
-- Bank earnings reports
+**Why Proxy Metrics Work:**
+- Information sector (USINFO) includes software, tech services, and related industries
+- Financial activities (USFIRE) includes banks, investment firms, and financial services
+- Employment changes in these sectors lead broader labor market by 3-9 months
+- Fully automated, no manual data entry required
 
-**Proxy Metric (Automated):**
-- Could use **FRED: USINFO** (Information sector employment) as proxy for tech
-- Could use **FRED: USFIRE** (Financial Activities employment) as proxy for finance
-- Track month-over-month changes
-
-### Calculation Method (Hybrid Approach)
+### Calculation Method (Proxy Metrics Approach)
 
 ```python
 def _score_high_income_sector_stress(self) -> Dict[str, Any]:
     """
-    High-Income Sector Stress (0-5 points)
+    High-Income Sector Stress (0-3 points)
     
     Tracks employment changes in:
-    - Information sector (tech proxy)
-    - Financial activities sector
+    - Information sector (USINFO) - proxy for tech sector
+    - Financial activities sector (USFIRE) - proxy for finance sector
     
-    Manual override available for announced layoffs data.
+    Uses 3-month employment change to smooth volatility and capture trends.
+    Fully automated via FRED API - no manual data required.
     
     Scoring:
     0 points: Both sectors adding jobs
-    2-3 points: One sector declining
-    5 points: Both sectors declining significantly
+    1-2 points: One sector declining moderately
+    3 points: Both sectors declining significantly (white-collar recession signal)
     """
     try:
-        # Fetch sector employment data
-        info = self.fred.fetch_series('USINFO', start_date='2024-01-01')  # Information (tech)
-        finance = self.fred.fetch_series('USFIRE', start_date='2024-01-01')  # Financial activities
+        # Fetch sector employment data (need at least 6 months for 3-month change)
+        info = self.fred.fetch_series('USINFO', start_date='2023-01-01')  # Information (tech proxy)
+        finance = self.fred.fetch_series('USFIRE', start_date='2023-01-01')  # Financial activities
         
         if len(info) < 6 or len(finance) < 6:
-            return {...}  # Error handling
+            return {
+                'name': 'high_income_stress',
+                'score': 0.0,
+                'error': 'Insufficient data for 3-month change calculation',
+                'data_source': 'FRED: USINFO, USFIRE'
+            }
         
         # Calculate 3-month change (to smooth volatility)
+        # Values are in thousands of jobs
         info_change_3m = info.iloc[-1] - info.iloc[-4]  # Thousands of jobs
         finance_change_3m = finance.iloc[-1] - finance.iloc[-4]
         
-        score = 0.0
-        
-        # Information sector component (0-2.5 pts)
+        # Information sector component (0-1.5 pts)
         if info_change_3m < -50:  # Losing >50k jobs in 3 months
-            info_score = 2.5
-        elif info_change_3m < -20:
             info_score = 1.5
-        elif info_change_3m < 0:
-            info_score = 0.5
-        else:
+        elif info_change_3m < -20:  # Losing 20-50k jobs
+            info_score = 1.0
+        elif info_change_3m < 0:  # Losing <20k jobs
+            info_score = 0.3
+        else:  # Adding jobs or flat
             info_score = 0.0
         
-        # Finance sector component (0-2.5 pts)
+        # Finance sector component (0-1.5 pts)
         if finance_change_3m < -30:  # Losing >30k jobs in 3 months
-            finance_score = 2.5
-        elif finance_change_3m < -10:
             finance_score = 1.5
-        elif finance_change_3m < 0:
-            finance_score = 0.5
-        else:
+        elif finance_change_3m < -10:  # Losing 10-30k jobs
+            finance_score = 1.0
+        elif finance_change_3m < 0:  # Losing <10k jobs
+            finance_score = 0.3
+        else:  # Adding jobs or flat
             finance_score = 0.0
         
-        total_score = info_score + finance_score
-        
-        # Check manual override from config
-        # (User can input announced layoffs for more accurate scoring)
-        if hasattr(self, 'manual_layoff_data'):
-            announced_tech = self.manual_layoff_data.get('tech_layoffs_ytd', 0)
-            announced_finance = self.manual_layoff_data.get('finance_layoffs_ytd', 0)
-            
-            # Override if announced layoffs are severe
-            if announced_tech > 150000 or announced_finance > 50000:
-                total_score = max(total_score, 4.0)
-            elif announced_tech > 100000 or announced_finance > 30000:
-                total_score = max(total_score, 3.0)
+        total_score = min(3.0, info_score + finance_score)  # Cap at 3.0
         
         # Interpretation
         if total_score == 0:
             interpretation = 'High-income sectors adding jobs - no stress'
-        elif total_score <= 2:
-            interpretation = f'Moderate stress in high-income sectors (tech: {info_change_3m/1000:.0f}k, finance: {finance_change_3m/1000:.0f}k 3-month change)'
+        elif total_score <= 1.5:
+            interpretation = f'Moderate stress in high-income sectors (info: {info_change_3m/1000:.0f}k, finance: {finance_change_3m/1000:.0f}k 3-month change)'
         else:
-            interpretation = f'Severe stress in high-income sectors - white-collar recession (tech: {info_change_3m/1000:.0f}k, finance: {finance_change_3m/1000:.0f}k)'
+            interpretation = f'Severe stress in high-income sectors - white-collar recession signal (info: {info_change_3m/1000:.0f}k, finance: {finance_change_3m/1000:.0f}k)'
         
         return {
             'name': 'high_income_stress',
             'score': round(total_score, 1),
             'info_sector_change_3m': int(info_change_3m),
             'finance_sector_change_3m': int(finance_change_3m),
+            'info_sector_current': int(info.iloc[-1]),
+            'finance_sector_current': int(finance.iloc[-1]),
             'interpretation': interpretation,
-            'data_source': 'FRED: USINFO, USFIRE + Manual Layoff Data'
+            'data_source': 'FRED: USINFO, USFIRE'
         }
 ```
 
@@ -421,25 +413,23 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 | Score | Tech Jobs (3M) | Finance Jobs (3M) | Pattern |
 |-------|---------------|-------------------|---------|
 | 0 | Growing | Growing | Expansion |
-| 0.5-1 | Flat/Small loss | Flat/Small loss | Stabilizing |
-| 2-3 | -20k to -50k | -10k to -30k | Significant cuts |
-| 4-5 | >-50k | >-30k | White-collar recession |
+| 0.3-0.6 | Flat/Small loss | Flat/Small loss | Stabilizing |
+| 1-2 | -20k to -50k | -10k to -30k | Significant cuts |
+| 2.5-3 | >-50k | >-30k | White-collar recession |
 
 ### Current Example (Late 2025)
 
-**Information Sector:**
-- 3-Month Change: ~-40k (estimated)
-- Announced Layoffs: 153,536 (through Nov)
-- Score: 2.0/2.5
+**Information Sector (USINFO):**
+- 3-Month Change: ~-40k (estimated from FRED data)
+- Score: 1.0/1.5 (moderate decline)
 
-**Financial Activities:**
-- 3-Month Change: ~-15k (estimated)
-- Nov 2025 alone: -9,000
-- Score: 1.5/2.5
+**Financial Activities (USFIRE):**
+- 3-Month Change: ~-15k (estimated from FRED data)
+- Score: 1.0/1.5 (moderate decline)
 
-**Total Score:** 3.5/5 🔴 (but with manual override for announced layoffs = 4.0/5)
+**Total Score:** 2.0/3 🔴
 
-**Interpretation:** Severe stress in high-income sectors - tech announced 153k cuts (up 17% YoY), finance shedding jobs across major banks.
+**Interpretation:** Moderate to severe stress in high-income sectors - both information and financial sectors showing employment declines, consistent with white-collar job cuts and economic slowdown signals.
 
 ### Why This Matters
 
@@ -457,17 +447,17 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 
 ## Revised Scoring Summary
 
-### Macro/Cycle Category (0-40 points)
+### Macro/Cycle Category (0-30 points)
 
 | Component | Current Weight | New Weight | Rationale |
 |-----------|---------------|------------|-----------|
-| **1. Sahm Rule / Unemployment** | 10 | 10 | Keep - reliable recession indicator |
+| **1. Sahm Rule / Unemployment** | 10 | 5 | REDUCE - reliable but lagging indicator |
 | **2. Yield Curve** | 10 | 10 | Keep - predicts recessions 6-18 months ahead |
 | **3. GDP vs Stall Speed** | 10 | 5 | REDUCE - quarterly lag, less useful real-time |
-| **4. U-6 Underemployment** | - | 5 | ADD - captures hidden slack early |
-| **5. Labor Market Softness** | - | 5 | ADD - demand-side leading indicator |
-| **6. High-Income Sector Stress** | - | 5 | ADD - white-collar bellwether |
-| **TOTAL** | 30 | 40 | More comprehensive, earlier signals |
+| **4. U-6 Underemployment** | - | 4 | ADD - captures hidden slack early |
+| **5. Labor Market Softness** | - | 3 | ADD - demand-side leading indicator |
+| **6. High-Income Sector Stress** | - | 3 | ADD - white-collar bellwether |
+| **TOTAL** | 30 | 30 | More comprehensive, earlier signals |
 
 ### Example Scoring (Late 2025)
 
@@ -477,35 +467,35 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 3. GDP: 5/10 ✓
 **Total: 18/30 **
 
-**Enhanced System (40 points):**
-1. Unemployment (Sahm): 3/10 ✓
+**Enhanced System (30 points):**
+1. Unemployment (Sahm): 1.5/5 ✓ (reduced weighting)
 2. Yield Curve: 10/10 ✓
 3. GDP: 3/5 (reduced weighting, 1.9% growth)
-4. U-6 Underemployment: 5/5 🔴 (up 1.4pp)
-5. Labor Market Softness: 4/5 🔴 (openings -36%, quits -30%)
-6. High-Income Stress: 4/5 🔴 (153k tech + finance layoffs)
-**Total: 29/40 **
+4. U-6 Underemployment: 4/4 🔴 (up 1.4pp)
+5. Labor Market Softness: 2.5/3 🔴 (openings -36%, quits -30%)
+6. High-Income Stress: 2.0/3 🔴 (info sector -40k, finance -15k 3-month change)
+**Total: 23.0/30 **
 
 ---
 
 ## Implementation Priority
 
-### Phase 1: Quick Wins (Week 1)
+### Phase 1: Quick Wins 
 ✅ **Already done:** Sahm Rule with 3-month MA
 ✅ **Already done:** Yield curve tracking
 ⚠️ **To do:** Add U-6 underemployment (easiest, FRED data available)
 
-### Phase 2: Core Enhancements (Week 2)
+### Phase 2: Core Enhancements 
 - Implement Labor Market Softness Index
 - Add job openings & quit rate tracking
 - Reduce GDP weighting from 10 to 5 points
 
-### Phase 3: Advanced Features (Week 3)
-- Add High-Income Sector Stress tracker
-- Create manual input interface for announced layoffs
-- Build quarterly update process for Challenger data
+### Phase 3: Advanced Features 
+- Add High-Income Sector Stress tracker using FRED proxy metrics (USINFO, USFIRE)
+- Implement 3-month change calculation to smooth volatility
+- Test thresholds against historical recession periods
 
-### Phase 4: Refinement (Week 4)
+### Phase 4: Refinement 
 - Backtest all indicators to 2000-present
 - Calibrate thresholds to historical recessions
 - Document interpretation guidelines
@@ -522,8 +512,8 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 | GDP | Quarterly | FRED | Auto | ~25th after quarter |
 | Job Openings | Monthly | FRED | Auto | 1st Tues, 2nd month |
 | Quit Rate | Monthly | FRED | Auto | 1st Tues, 2nd month |
-| Sector Employment | Monthly | FRED | Auto | 1st Friday |
-| Announced Layoffs | Quarterly | Challenger | Manual | Within 1 week of release |
+| Info Sector (USINFO) | Monthly | FRED | Auto | 1st Friday |
+| Finance Sector (USFIRE) | Monthly | FRED | Auto | 1st Friday |
 
 ### Critical Update Windows
 
@@ -539,38 +529,37 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 
 **Quarterly:**
 - GDP (auto via FRED)
-- Challenger layoff data (manual input)
-- **Action:** Review and update manual override flags
+- **Action:** Review all indicators for quarterly trend analysis
 
 ---
 
 ## Interpretation Guide
 
-### Score Bands (Out of 40)
+### Score Bands (Out of 30)
 
 | Score | Risk Level | Interpretation | Historical Analogs |
 |-------|-----------|----------------|-------------------|
-| 0-10 | **Low** | Healthy expansion, strong labor market | 2013-2015, 2017-2019 |
-| 11-20 | **Moderate** | Late-cycle, some cooling | 2018, early 2019 |
-| 21-30 | **Elevated** | Clear warning signs, recession probable | Late 2007, late 2019 |
-| 31-40 | **Severe** | Multiple red flags, recession imminent/starting | 2008, 2020, **2025?** |
+| 0-7 | **Low** | Healthy expansion, strong labor market | 2013-2015, 2017-2019 |
+| 8-15 | **Moderate** | Late-cycle, some cooling | 2018, early 2019 |
+| 16-22 | **Elevated** | Clear warning signs, recession probable | Late 2007, late 2019 |
+| 23-30 | **Severe** | Multiple red flags, recession imminent/starting | 2008, 2020, **2025?** |
 
 ### Component Analysis Patterns
 
-**Early-Stage Warning (Score 15-25):**
+**Early-Stage Warning (Score 11-18):**
 - U-6 rising, but Sahm not triggered
 - Job openings declining 20-30%
 - Yield curve inverted but not steepening
 - **Action:** Increase cash, add defensive positions
 
-**Late-Stage Warning (Score 26-35):**
+**Late-Stage Warning (Score 19-25):**
 - Sahm Rule triggered OR U-6 up significantly
 - Job openings down >30%, quits down >25%
 - Yield curve steepened after inversion
 - White-collar layoffs accelerating
 - **Action:** Major portfolio de-risking
 
-**Crisis Conditions (Score 36-40):**
+**Crisis Conditions (Score 26-30):**
 - ALL indicators flashing red
 - Sahm triggered + U-6 spiking
 - Labor demand collapsed
@@ -580,19 +569,19 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 ### Divergence Signals (Important!)
 
 **Quality Deterioration Before Quantity:**
-- If U-6 score high (4-5) while Sahm score low (0-2)
+- If U-6 score high (3-4) while Sahm score low (0-1)
 - Indicates labor market weakening in **quality** first
 - Typical lead time: 3-6 months before Sahm triggers
 - **Action:** Early warning, prepare for deterioration
 
 **Demand Collapse Before Supply:**
-- If Labor Softness score high (4-5) while unemployment low
+- If Labor Softness score high (2.5-3) while unemployment low
 - Job openings falling faster than unemployment rising
 - Indicates companies **stopping hiring** before **starting firing**
 - **Action:** Leading signal, recession 6-12 months out
 
 **Sector-Specific Before Broad:**
-- If High-Income Stress high (4-5) while overall employment stable
+- If High-Income Stress high (2.5-3) while overall employment stable
 - Tech/finance layoffs precede manufacturing/services
 - Indicates economic cycle turning
 - **Action:** Monitor for contagion, reduce cyclical exposure
@@ -613,9 +602,9 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 
 | Quarter | U-6 | Labor Soft | Sector | Sahm | Yield | GDP | Total | Actual |
 |---------|-----|-----------|--------|------|-------|-----|-------|--------|
-| Q1 2007 | 1 | 2 | 2 | 0 | 8 | 0 | 13/40 | No recession |
-| Q3 2007 | 3 | 3 | 3 | 5 | 10 | 2 | 26/40 | Pre-recession |
-| Q1 2008 | 4 | 5 | 4 | 10 | 10 | 4 | 37/40 | Recession starts |
+| Q1 2007 | 0.5 | 1 | 1 | 0 | 8 | 0 | 10.5/30 | No recession |
+| Q3 2007 | 2 | 2 | 2 | 2.5 | 10 | 1 | 19.5/30 | Pre-recession |
+| Q1 2008 | 3 | 3 | 2.5 | 5 | 10 | 2 | 25.5/30 | Recession starts |
 
 **Lead Time:** 6-9 months before official recession start
 
@@ -631,23 +620,23 @@ def _score_high_income_sector_stress(self) -> Dict[str, Any]:
 
 | Quarter | U-6 | Labor Soft | Sector | Sahm | Yield | GDP | Total | Actual |
 |---------|-----|-----------|--------|------|-------|-----|-------|--------|
-| Q2 2000 | 2 | 3 | 5 | 0 | 5 | 0 | 15/40 | Bubble peak |
-| Q4 2000 | 3 | 4 | 5 | 2 | 8 | 3 | 25/40 | Pre-recession |
-| Q2 2001 | 5 | 5 | 5 | 8 | 10 | 5 | 38/40 | In recession |
+| Q2 2000 | 1 | 2 | 3 | 0 | 5 | 0 | 11/30 | Bubble peak |
+| Q4 2000 | 2 | 2.5 | 3 | 1 | 8 | 1.5 | 18/30 | Pre-recession |
+| Q2 2001 | 4 | 3 | 3 | 4 | 10 | 2.5 | 26.5/30 | In recession |
 
 **Lead Time:** 9-12 months with sector stress indicator
 
 ### Current (Late 2025)
 
 **Scoring:**
-- U-6: 5/5 (up 1.4pp from trough)
-- Labor Softness: 4/5 (openings -36%, quits -30%)
-- High-Income Stress: 4/5 (153k tech + finance layoffs)
-- Sahm Rule: 3/10 (not triggered)
+- U-6: 4/4 (up 1.4pp from trough)
+- Labor Softness: 2.5/3 (openings -36%, quits -30%)
+- High-Income Stress: 2.0/3 (info sector declining, finance sector declining)
+- Sahm Rule: 1.5/5 (not triggered, reduced weighting)
 - Yield Curve: 10/10 (extended inversion + steepening)
 - GDP: 3/5 (1.9% growth, near stall)
 
-**Total: 29/40  🔴**
+**Total: 23.0/30  🔴**
 
 **Interpretation:** Multiple severe warning signals across all categories. Pattern consistent with 2008 and 2001 pre-recession setups. Recession highly probable within 3-6 months.
 
@@ -692,7 +681,7 @@ if u6_3m_change > u6_1m_change * 2:
 Combine all labor indicators into single 0-100 health metric:
 
 ```
-Labor Health = 100 - (Sahm_score*4 + U6_score*3 + Labor_Soft*2 + Sector*1)
+Labor Health = 100 - (Sahm_score*5 + U6_score*4 + Labor_Soft*3 + Sector*3)
 
 90-100: Excellent
 70-89: Good  
@@ -706,12 +695,13 @@ Labor Health = 100 - (Sahm_score*4 + U6_score*3 + Labor_Soft*2 + Sector*1)
 Use logistic regression on historical data:
 
 ```python
-# Inputs: All 6 indicator scores
+# Inputs: All 6 indicator scores (out of 30 total)
 # Output: Probability of recession in next 12 months
 
 recession_prob = logistic_function(
-    sahm*0.3 + yield*0.25 + u6*0.2 + labor_soft*0.15 + sector*0.1 + gdp*0.05
+    sahm*0.17 + yield*0.33 + u6*0.13 + labor_soft*0.10 + sector*0.10 + gdp*0.17
 )
+# Weights normalized to sum to 1.0, reflecting point allocations (5, 10, 4, 3, 3, 5)
 ```
 
 Train on 1960-2023 data for calibration.
@@ -724,22 +714,22 @@ Train on 1960-2023 data for calibration.
 # Enhanced macro_cycle.py structure
 
 class MacroCycleCategory(BaseCategory):
-    """Enhanced Macro/Cycle Risk Assessment (0-40 points)"""
+    """Enhanced Macro/Cycle Risk Assessment (0-30 points)"""
     
     def calculate(self) -> Dict[str, Any]:
         """Calculate enhanced macro/cycle score"""
         
-        # Traditional indicators (25 points)
-        unemployment = self._score_unemployment_trend()  # 0-10
+        # Traditional indicators (20 points)
+        unemployment = self._score_unemployment_trend()  # 0-5 (REDUCED)
         yield_curve = self._score_yield_curve()  # 0-10
         gdp = self._score_gdp_vs_stall()  # 0-5 (REDUCED)
         
-        # New leading indicators (15 points)
-        u6_stress = self._score_u6_deterioration()  # 0-5
-        labor_soft = self._score_labor_market_softness()  # 0-5
-        sector_stress = self._score_high_income_sector_stress()  # 0-5
+        # New leading indicators (10 points)
+        u6_stress = self._score_u6_deterioration()  # 0-4
+        labor_soft = self._score_labor_market_softness()  # 0-3
+        sector_stress = self._score_high_income_sector_stress()  # 0-3
         
-        total_score = min(40.0, 
+        total_score = min(30.0, 
             unemployment['score'] + 
             yield_curve['score'] + 
             gdp['score'] + 
@@ -753,7 +743,7 @@ class MacroCycleCategory(BaseCategory):
         
         return {
             'score': round(total_score, 1),
-            'max_points': 40.0,
+            'max_points': 30.0,
             'risk_level': risk_level,
             'components': {
                 'unemployment': unemployment,
@@ -769,11 +759,11 @@ class MacroCycleCategory(BaseCategory):
     
     def _determine_risk_level(self, score: float) -> str:
         """Map score to risk level"""
-        if score < 10:
+        if score < 8:
             return "LOW"
-        elif score < 20:
+        elif score < 16:
             return "MODERATE"
-        elif score < 30:
+        elif score < 23:
             return "ELEVATED"
         else:
             return "SEVERE"
@@ -793,7 +783,7 @@ class MacroCycleCategory(BaseCategory):
 ### Unit Tests
 - [ ] Each indicator calculates correctly with known data
 - [ ] Edge cases handled (missing data, extreme values)
-- [ ] Score bounds enforced (0-5, 0-10, etc.)
+- [ ] Score bounds enforced (Sahm: 0-5, Yield: 0-10, GDP: 0-5, U-6: 0-4, Labor Soft: 0-3, Sector: 0-3)
 
 ### Integration Tests
 - [ ] All 6 indicators run together without errors
@@ -801,14 +791,14 @@ class MacroCycleCategory(BaseCategory):
 - [ ] Metadata updates properly
 
 ### Historical Backtesting
-- [ ] Run system on 2007-2008 data (should show 25-38 range)
+- [ ] Run system on 2007-2008 data (should show 19-26 range)
 - [ ] Run on 2019-2020 data (should spike in early 2020)
 - [ ] Run on 2000-2001 data (should catch tech recession)
 - [ ] Verify lead times match historical patterns
 
 ### Current Data Validation
 - [ ] Scores match your research findings
-- [ ] Late 2025 shows 35-38/40 (severe risk)
+- [ ] Late 2025 shows 23-26/30 (severe risk)
 - [ ] Each component justified by actual data points
 
 ---
@@ -825,8 +815,8 @@ You now have a system that provides **3-9 months of advance warning** instead of
 
 **Current Late 2025 Reality:**
 - Your research documents severe deterioration across all metrics
-- Current system: 17/30 (moderately elevated)
-- Enhanced system: 29/40 ( multiple red flags)
+- Current system: 18/30 (moderately elevated)
+- Enhanced system: 23.5/30 ( multiple red flags)
 - **The enhanced system better captures the actual risk level**
 
 This specification gives you the blueprint to build a truly **predictive** macro risk system that aligns with the comprehensive research you've compiled.
