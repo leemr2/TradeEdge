@@ -19,10 +19,68 @@ This document provides implementation specifications for four enhancement areas 
 | 3. Liquidity Plumbing | 0-10 | Fed policy & market structure risk |
 | 4. Consumer Stress | 0-10 | Pre-unemployment deterioration |
 
-**Recommended Integration:** These 40 new points can either:
-- **Option A:** Replace existing Technical/Sentiment (10 pts) and expand total to 130 points
-- **Option B:** Create a parallel "Early Warning Score" (EWS) that complements FRS
-- **Option C:** Weight-average with existing FRS for a "Combined Risk Score"
+**Recommended Integration:** These 40 new points will:
+- Create a parallel "Early Warning Score" (EWS) that combines with FRS and VP to create a new improved CMDS
+- **New CMDS Formula:** CMDS = (0.65 × FRS) + (0.20 × EWS_normalized) + (0.15 × VP)
+  - FRS contributes 65%: `0.65 × FRS` (FRS is 0-100)
+  - EWS contributes 20%: `0.20 × (EWS_raw / 40) × 100` (EWS normalized to 0-100)
+  - VP contributes 15%: `0.15 × VP` (VP is 0-100)
+  - CMDS final score: 0-100 scale (weighted sum)
+
+---
+
+## New CMDS Formula Overview
+
+**Current CMDS (to be replaced):**
+```
+CMDS = (0.65 × FRS) + (0.35 × VP)
+```
+
+**New CMDS Formula:**
+```
+CMDS = (0.65 × FRS) + (0.20 × EWS_normalized) + (0.15 × VP)
+```
+
+### Detailed Calculation
+
+1. **Fundamental Risk Score (FRS)**: 0-100 points
+   - Macro/Cycle: 0-30 points
+   - Valuation: 0-25 points
+   - Leverage & Stability: 0-25 points
+   - Earnings & Margins: 0-10 points
+   - Sentiment: -10 to +10 points
+   - **FRS Contribution to CMDS**: `0.65 × FRS` = 0-65 points
+
+2. **Early Warning Score (EWS)**: 0-40 points
+   - Global Contagion: 0-10 points
+   - Leading Indicators: 0-10 points
+   - Liquidity Plumbing: 0-10 points
+   - Consumer Stress: 0-10 points
+   - **EWS Normalized**: `(EWS_raw / 40) × 100` = 0-100 scale
+   - **EWS Contribution to CMDS**: `0.20 × EWS_normalized` = 0-20 points
+
+3. **Volatility Predictor (VP)**: 0-100 points
+   - Fear keyword composite, search volatility, cross-asset stress
+   - **VP Contribution to CMDS**: `0.15 × VP` = 0-15 points
+
+4. **CMDS Final Score**: `FRS_contribution + EWS_contribution + VP_contribution` = 0-100 scale
+
+### Weight Distribution
+
+| Component | Raw Range | Normalized Range | Weight | Contribution Range | Rationale |
+|-----------|-----------|-----------------|--------|-------------------|-----------|
+| FRS | 0-100 | 0-100 | 65% | 0-65 points | Fundamental structural risk assessment |
+| EWS | 0-40 | 0-100 | 20% | 0-20 points | Early warning signals (3-12 month lead time) |
+| VP | 0-100 | 0-100 | 15% | 0-15 points | Timing precision and sentiment shifts |
+| **Total** | - | - | **100%** | **0-100** | Weighted sum, no normalization needed |
+
+### Why This Approach?
+
+- **FRS remains primary**: 65% weight reflects fundamental structural risk as the foundation
+- **EWS adds early warning**: 20% weight provides 3-12 months lead time on deterioration
+- **VP provides timing**: 15% weight catches sentiment shifts and short-term risk spikes
+- **Comprehensive coverage**: Fundamental assessment (FRS) + Early warnings (EWS) + Timing (VP) = complete risk picture
+- **Maintains CMDS scale**: Final score remains 0-100 for consistency with existing allocation zones
 
 ---
 
@@ -1134,9 +1192,9 @@ Modify the existing FRS structure to incorporate all new categories:
 
 Rescale to 100 if needed: `FRS_Enhanced = (Raw_Score / 130) * 100`
 
-## Option B: Parallel Early Warning Score (EWS)
+## Option B: Parallel Early Warning Score (EWS) - **SELECTED APPROACH**
 
-Keep FRS unchanged, create a separate Early Warning Score:
+Keep FRS unchanged, create a separate Early Warning Score that combines with VP to form the new CMDS:
 
 ```python
 def calculate_ews(fred_api_key: str) -> dict:
@@ -1174,46 +1232,147 @@ def calculate_ews(fred_api_key: str) -> dict:
 | 21-30 | Elevated | Reduce risk, add hedges |
 | 31-40 | High | Defensive positioning |
 
-## Option C: Combined Risk Score (CRS)
+## Option C: New CMDS Formula (FRS + EWS + VP) - **SELECTED APPROACH**
 
-Weight-average FRS and EWS:
+**Selected Approach:** Enhance the current CMDS formula to include EWS alongside FRS and VP:
 
 ```python
-def calculate_combined_risk_score(frs_total: float, ews_total: float) -> dict:
+def calculate_new_cmds(frs_score: float, ews_total: float, vp_score: float) -> dict:
     """
-    Combined Risk Score: Weighted average of FRS and EWS.
+    New Combined Market Danger Score: FRS + EWS + VP
     
-    FRS (0-100): Fundamental assessment (slower-moving)
-    EWS (0-100 normalized): Early warning (faster-moving)
+    Formula:
+    - FRS contributes 65%: 0.65 × FRS (FRS is 0-100)
+    - EWS contributes 20%: 0.20 × (EWS_raw / 40) × 100 (EWS normalized to 0-100)
+    - VP contributes 15%: 0.15 × VP (VP is 0-100)
+    - CMDS = weighted sum = 0-100 scale
     
-    Weighting: 60% FRS, 40% EWS
-    Rationale: FRS covers more ground; EWS adds lead time
+    Args:
+        frs_score: Fundamental Risk Score (0-100)
+        ews_total: Early Warning Score (0-40 points)
+        vp_score: Volatility Predictor score (0-100)
+    
+    Returns:
+        dict with CMDS score, components, interpretation
     """
-    frs_weight = 0.60
-    ews_weight = 0.40
-    
     # Normalize EWS to 0-100 scale
     ews_normalized = (ews_total / 40) * 100
     
-    crs = (frs_total * frs_weight) + (ews_normalized * ews_weight)
+    # Calculate weighted contributions
+    frs_contribution = 0.65 * frs_score           # 0-65 points
+    ews_contribution = 0.20 * ews_normalized       # 0-20 points
+    vp_contribution = 0.15 * vp_score              # 0-15 points
+    
+    # CMDS is weighted sum (already 0-100 scale)
+    cmds = frs_contribution + ews_contribution + vp_contribution
+    cmds = max(0, min(100, cmds))  # Clamp to 0-100
     
     return {
-        'combined_risk_score': round(crs, 1),
-        'frs_component': round(frs_total * frs_weight, 1),
-        'ews_component': round(ews_normalized * ews_weight, 1),
-        'interpretation': get_crs_interpretation(crs)
+        'cmds': round(cmds, 1),
+        'components': {
+            'frs': {
+                'raw': round(frs_score, 1),
+                'max': 100,
+                'weight': 0.65,
+                'contribution': round(frs_contribution, 1),
+                'max_contribution': 65
+            },
+            'ews': {
+                'raw': round(ews_total, 1),
+                'max': 40,
+                'normalized': round(ews_normalized, 1),
+                'weight': 0.20,
+                'contribution': round(ews_contribution, 1),
+                'max_contribution': 20
+            },
+            'vp': {
+                'raw': round(vp_score, 1),
+                'max': 100,
+                'weight': 0.15,
+                'contribution': round(vp_contribution, 1),
+                'max_contribution': 15
+            }
+        },
+        'weights': {
+            'frs_weight': 0.65,
+            'ews_weight': 0.20,
+            'vp_weight': 0.15
+        },
+        'zone': get_cmds_zone(cmds),
+        'interpretation': get_cmds_interpretation(cmds)
     }
 
-def get_crs_interpretation(crs: float) -> str:
-    if crs < 30:
-        return "Low Risk - Full allocation appropriate"
-    elif crs < 50:
-        return "Moderate Risk - Normal allocation with monitoring"
-    elif crs < 70:
-        return "Elevated Risk - Reduce risk, add hedges"
+def get_cmds_zone(cmds: float) -> str:
+    """Determine CMDS risk zone"""
+    if cmds < 25:
+        return "SAFE"
+    elif cmds < 45:
+        return "CAUTIOUS"
+    elif cmds < 65:
+        return "ELEVATED"
+    elif cmds < 80:
+        return "HIGH"
     else:
-        return "High Risk - Defensive positioning required"
+        return "EXTREME"
+
+def get_cmds_interpretation(cmds: float) -> str:
+    """Provide interpretation of CMDS level"""
+    if cmds < 25:
+        return "Low Risk - Full allocation appropriate (90-100% equity)"
+    elif cmds < 45:
+        return "Moderate Risk - Normal allocation with monitoring (70-90% equity)"
+    elif cmds < 65:
+        return "Elevated Risk - Reduce risk, add hedges (50-70% equity)"
+    elif cmds < 80:
+        return "High Risk - Defensive positioning (30-50% equity)"
+    else:
+        return "Extreme Risk - Maximum defensive positioning (10-30% equity)"
 ```
+
+### New CMDS Calculation Example
+
+```
+Fundamental Risk Score (FRS): 75/100
+├── Macro/Cycle:        22/30
+├── Valuation:           20/25
+├── Leverage & Stability: 20/25
+├── Earnings & Margins:   8/10
+└── Sentiment:           +5/10
+
+Early Warning Score (EWS): 28/40
+├── Global Contagion:     6/10
+├── Leading Indicators:   8/10
+├── Liquidity Plumbing:   7/10
+└── Consumer Stress:      7/10
+
+Volatility Predictor (VP): 65/100
+├── Fear Keyword Composite: Moderate
+├── Search Volatility: Elevated patterns
+└── Cross-Asset Stress: Moderate
+
+CMDS Calculation:
+FRS Contribution = 0.65 × 75 = 48.75 points
+EWS Normalized   = (28 / 40) × 100 = 70.0
+EWS Contribution = 0.20 × 70.0 = 14.0 points
+VP Contribution  = 0.15 × 65 = 9.75 points
+CMDS             = 48.75 + 14.0 + 9.75 = 72.5 → 73/100
+
+Zone: HIGH (30-50% equity allocation)
+```
+
+### Rationale for New CMDS Formula
+
+**Why FRS + EWS + VP:**
+- **FRS remains foundation (65%)**: Fundamental structural risk assessment is the primary driver of long-term risk
+- **EWS adds early warning (20%)**: Leading indicators detect deterioration 3-12 months before lagging indicators, providing actionable lead time
+- **VP provides timing precision (15%)**: Volatility Predictor catches sentiment shifts and short-term risk spikes for optimal entry/exit timing
+- **Comprehensive coverage**: Fundamental assessment (FRS) + Early warnings (EWS) + Timing (VP) = complete risk picture
+
+**Why 65% FRS + 20% EWS + 15% VP:**
+- FRS gets majority weight because fundamentals determine the magnitude of potential corrections
+- EWS gets meaningful weight (20%) to provide early warning signals without overwhelming the fundamental assessment
+- VP gets focused weight (15%) to add timing precision while maintaining emphasis on structural risk
+- All components normalized to 0-100 scale for consistent weighting
 
 ---
 
@@ -1282,9 +1441,21 @@ def calculate_enhanced_frs(fred_api_key: str, manual_inputs: dict = None) -> dic
     ews_total = (global_contagion['total'] + leading['total'] + 
                 liquidity['total'] + consumer['total'])
     
-    # Combined score (60/40 weighting)
+    # Get VP score (assume available from VP module)
+    vp_score = get_vp_score()  # Returns 0-100
+    
+    # Calculate new CMDS (FRS + EWS + VP)
+    # Normalize EWS to 0-100 scale
     ews_normalized = (ews_total / 40) * 100
-    combined = (frs_original * 0.60) + (ews_normalized * 0.40)
+    
+    # Calculate weighted contributions
+    frs_contribution = 0.65 * frs_original      # 0-65 points
+    ews_contribution = 0.20 * ews_normalized    # 0-20 points
+    vp_contribution = 0.15 * vp_score           # 0-15 points
+    
+    # CMDS is weighted sum (already 0-100 scale)
+    cmds = frs_contribution + ews_contribution + vp_contribution
+    cmds = max(0, min(100, cmds))  # Clamp to 0-100
     
     return {
         'timestamp': datetime.now().isoformat(),
@@ -1292,6 +1463,9 @@ def calculate_enhanced_frs(fred_api_key: str, manual_inputs: dict = None) -> dic
             'frs_original': {
                 'total': frs_original,
                 'max': 100,
+                'weight': 0.65,
+                'contribution_to_cmds': round(frs_contribution, 1),
+                'max_contribution': 65,
                 'categories': {
                     'macro_cycle': macro_cycle,
                     'valuation': valuation,
@@ -1304,6 +1478,9 @@ def calculate_enhanced_frs(fred_api_key: str, manual_inputs: dict = None) -> dic
                 'total': ews_total,
                 'max': 40,
                 'normalized': round(ews_normalized, 1),
+                'weight': 0.20,
+                'contribution_to_cmds': round(ews_contribution, 1),
+                'max_contribution': 20,
                 'categories': {
                     'global_contagion': global_contagion,
                     'leading_indicators': leading,
@@ -1311,12 +1488,25 @@ def calculate_enhanced_frs(fred_api_key: str, manual_inputs: dict = None) -> dic
                     'consumer_stress': consumer
                 }
             },
-            'combined_risk_score': round(combined, 1)
+            'volatility_predictor': {
+                'total': vp_score,
+                'max': 100,
+                'weight': 0.15,
+                'contribution_to_cmds': round(vp_contribution, 1),
+                'max_contribution': 15
+            },
+            'cmds': {
+                'total': round(cmds, 1),
+                'max': 100,
+                'zone': get_cmds_zone(cmds)
+            }
         },
         'interpretation': {
             'frs_zone': get_frs_zone(frs_original),
             'ews_zone': get_ews_zone(ews_total),
-            'combined_zone': get_crs_interpretation(combined)
+            'vp_level': get_vp_level(vp_score),
+            'cmds_zone': get_cmds_zone(cmds),
+            'cmds_interpretation': get_cmds_interpretation(cmds)
         }
     }
 ```
