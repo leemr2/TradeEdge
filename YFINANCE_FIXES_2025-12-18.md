@@ -161,3 +161,137 @@ If these appear frequently, it may indicate:
 
 The application is now fully operational with fresh market data!
 
+---
+
+## Additional Reliability Improvements - December 21, 2025
+
+### Problem
+Despite previous fixes, yfinance was still experiencing frequent failures with "Expecting value: line 1 column 1 (char 0)" errors, indicating empty or invalid JSON responses from Yahoo Finance.
+
+### Root Causes
+1. **Method Selection**: `Ticker().history()` is less reliable than `yf.download()`
+2. **Insufficient Retry Delays**: Previous delays (3s) were too short for Yahoo's rate limiting
+3. **No Exponential Backoff**: Retries happened too quickly, triggering more blocks
+4. **No Jitter**: Synchronized retries could cause coordinated blocking
+5. **Poor Error Detection**: JSON parsing errors weren't handled specifically
+
+### Solutions Implemented
+
+#### 1. Switched to `yf.download()` Method
+**File**: `backend/analytics/data_fetchers/yfinance_client.py`
+
+Changed from:
+```python
+stock = yf.Ticker(ticker)
+data = stock.history(period=period, interval=interval)
+```
+
+To:
+```python
+data = yf.download(
+    ticker,
+    start=start_date.strftime('%Y-%m-%d'),
+    end=end_date.strftime('%Y-%m-%d'),
+    interval=interval,
+    progress=False,
+    show_errors=False,
+    auto_adjust=True,
+    prepost=False
+)
+```
+
+**Why**: `download()` is more stable and handles errors more gracefully. Falls back to `Ticker().history()` if download() fails.
+
+#### 2. Exponential Backoff with Jitter
+```python
+def _calculate_backoff(self, attempt: int) -> float:
+    """Calculate exponential backoff delay with jitter"""
+    delay = min(self.base_retry_delay * (2 ** attempt), self.max_retry_delay)
+    jitter = random.uniform(0, delay * 0.2)  # 0-20% jitter
+    return delay + jitter
+```
+
+**Delays**: 5s → 10s → 20s (capped at 30s max)
+**Jitter**: Random 0-20% added to prevent synchronized retries
+
+#### 3. Increased Rate Limiting
+- **Request interval**: Increased from 1s to 2s between requests
+- **Base retry delay**: Increased from 3s to 5s
+- **Max retries**: Increased from 2 to 3 attempts
+- **Jitter**: Added random 0-0.5s jitter to request intervals
+
+#### 4. Better Error Detection
+```python
+def _is_json_error(self, error: Exception) -> bool:
+    """Check if error is a JSON parsing error (empty response)"""
+    error_str = str(error).lower()
+    json_errors = [
+        "expecting value",
+        "line 1 column 1",
+        "jsondecodeerror",
+        "valueerror",
+        "empty response",
+        "no data",
+    ]
+    return any(err in error_str for err in json_errors)
+```
+
+JSON errors now trigger longer backoff delays since they often indicate temporary blocking.
+
+#### 5. Improved Retry Logic
+- JSON parsing errors → Longer exponential backoff (5s, 10s, 20s)
+- Rate limit errors (429) → Same exponential backoff
+- Other errors → Standard retry with backoff
+- Fallback method → Tries `Ticker().history()` if `download()` fails on last attempt
+
+### Expected Improvements
+
+1. **Higher Success Rate**: `download()` method is more reliable
+2. **Fewer Blocks**: Longer delays and jitter reduce coordinated requests
+3. **Better Recovery**: Exponential backoff gives Yahoo time to unblock
+4. **Graceful Degradation**: Falls back to `Ticker().history()` if `download()` fails
+
+### Version Update (December 21, 2025)
+
+**Issue**: Virtual environment had yfinance 0.2.28 instead of required >= 0.2.66
+
+**Solution**: Upgraded yfinance in virtual environment:
+```bash
+.venv\Scripts\pip install --upgrade yfinance
+```
+
+**Result**: Successfully upgraded from 0.2.28 → 0.2.66
+
+**New Dependencies Added**:
+- `curl_cffi>=0.7` - Required for yfinance 0.2.66+ (handles Yahoo's anti-bot measures)
+- `peewee>=3.16.2` - Database ORM used by yfinance
+- `platformdirs>=2.0.0` - Platform-specific directory handling
+- `protobuf>=3.19.0` - Protocol buffers for data serialization
+
+**Note**: Always upgrade packages in the virtual environment, not globally:
+- ✅ Correct: `.venv\Scripts\pip install --upgrade yfinance`
+- ❌ Wrong: `pip install --upgrade yfinance` (installs to global Python)
+
+### Testing Recommendations
+
+Monitor these log patterns:
+- `✓ Fetched and cached {ticker} ({n} data points)` - Success
+- `ℹ Using Ticker().history() fallback for {ticker}` - Fallback used
+- `↻ Retry {n}/{max} for {ticker} (waiting {delay}s...)` - Retry with backoff
+- `⚠ Empty/invalid response, waiting {delay}s before retry...` - JSON error detected
+- `⚠ Using stale cache for {ticker}` - All retries failed, using cache
+
+If failures persist:
+1. Check yfinance version: `pip show yfinance` (should be >= 0.2.66)
+2. Consider further increasing delays (edit `base_retry_delay` and `min_request_interval`)
+3. Check network/VPN - IP may be temporarily blocked
+4. Monitor Yahoo Finance status - site may be experiencing issues
+
+### Files Modified
+
+1. `backend/analytics/data_fetchers/yfinance_client.py`
+   - Added exponential backoff with jitter
+   - Switched to `yf.download()` as primary method
+   - Improved error detection and handling
+   - Increased rate limiting delays
+

@@ -6,7 +6,9 @@
       "Bash(python -m analytics.core.frs_calculator:*)",
       "Bash(python validate_macro_enhanced.py:*)",
       "Bash(python simple_validate.py:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(python -c:*)",
+      "Bash(python check_sector_data.py:*)"
     ],
     "deny": [],
     "ask": []

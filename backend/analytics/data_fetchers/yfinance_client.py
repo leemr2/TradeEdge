@@ -12,6 +12,7 @@ import numpy as np
 from typing import Optional, Dict, Any
 import warnings
 import time
+import random
 warnings.filterwarnings('ignore')
 
 try:
@@ -41,9 +42,10 @@ class YFinanceClient:
         
         # Rate limiting settings - more conservative to avoid blocks
         self.last_request_time = 0
-        self.min_request_interval = 1.0  # 1 second between requests (was 500ms)
-        self.max_retries = 2  # Reduced retries to avoid hammering API
-        self.retry_delay = 3  # Increased delay between retries (was 2 seconds)
+        self.min_request_interval = 2.0  # 2 seconds between requests (increased from 1s)
+        self.max_retries = 3  # Increased retries with exponential backoff
+        self.base_retry_delay = 5  # Base delay of 5 seconds (increased from 3s)
+        self.max_retry_delay = 30  # Maximum delay of 30 seconds
         
         # Configure user agent for yfinance to avoid blocks
         self._configure_yfinance()
@@ -70,12 +72,38 @@ class YFinanceClient:
             self.timeout = 10
     
     def _rate_limit(self):
-        """Enforce rate limiting between requests"""
+        """Enforce rate limiting between requests with jitter"""
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
-        if time_since_last_request < self.min_request_interval:
-            time.sleep(self.min_request_interval - time_since_last_request)
+        
+        # Add random jitter (0-0.5s) to avoid synchronized requests
+        jitter = random.uniform(0, 0.5)
+        wait_time = self.min_request_interval + jitter - time_since_last_request
+        
+        if wait_time > 0:
+            time.sleep(wait_time)
         self.last_request_time = time.time()
+    
+    def _is_json_error(self, error: Exception) -> bool:
+        """Check if error is a JSON parsing error (empty response)"""
+        error_str = str(error).lower()
+        json_errors = [
+            "expecting value",
+            "line 1 column 1",
+            "jsondecodeerror",
+            "valueerror",
+            "empty response",
+            "no data",
+        ]
+        return any(err in error_str for err in json_errors)
+    
+    def _calculate_backoff(self, attempt: int) -> float:
+        """Calculate exponential backoff delay with jitter"""
+        # Exponential backoff: base_delay * (2 ^ attempt)
+        delay = min(self.base_retry_delay * (2 ** attempt), self.max_retry_delay)
+        # Add random jitter (0-20% of delay)
+        jitter = random.uniform(0, delay * 0.2)
+        return delay + jitter
     
     def _get_cache_path(self, ticker: str, date: str) -> Path:
         """Get cache file path for a ticker and date"""
@@ -181,24 +209,90 @@ class YFinanceClient:
                 print(f"  ⚠ Cache read error: {e}, fetching fresh data")
         
         # Fetch from API with retry logic
+        last_error = None
         for attempt in range(self.max_retries):
             try:
                 if attempt > 0:
-                    print(f"  ↻ Retry {attempt}/{self.max_retries - 1} for {ticker}")
-                    time.sleep(self.retry_delay * attempt)  # Exponential backoff
+                    backoff_delay = self._calculate_backoff(attempt - 1)
+                    print(f"  ↻ Retry {attempt}/{self.max_retries - 1} for {ticker} (waiting {backoff_delay:.1f}s)...")
+                    time.sleep(backoff_delay)
                 
                 print(f"  Fetching {ticker} from Yahoo Finance...")
                 
                 # Rate limit the request
                 self._rate_limit()
                 
-                # Create ticker (let yfinance handle session internally)
-                stock = yf.Ticker(ticker)
+                # Use yf.download() instead of Ticker().history() for better reliability
+                # download() handles errors more gracefully and is more stable
+                data = None
+                download_error = None
                 
-                data = stock.history(period=period, interval=interval)
+                # Convert period to start/end dates for download()
+                end_date = datetime.now()
+                if period == "1d":
+                    start_date = end_date - timedelta(days=2)
+                elif period == "5d":
+                    start_date = end_date - timedelta(days=7)
+                elif period == "1mo":
+                    start_date = end_date - timedelta(days=35)
+                elif period == "3mo":
+                    start_date = end_date - timedelta(days=95)
+                elif period == "6mo":
+                    start_date = end_date - timedelta(days=185)
+                elif period == "1y":
+                    start_date = end_date - timedelta(days=370)
+                elif period == "2y":
+                    start_date = end_date - timedelta(days=740)
+                elif period == "5y":
+                    start_date = end_date - timedelta(days=1850)
+                else:
+                    # Default to 1 year
+                    start_date = end_date - timedelta(days=370)
+                
+                # Try download() method first (more reliable)
+                try:
+                    data = yf.download(
+                        ticker,
+                        start=start_date.strftime('%Y-%m-%d'),
+                        end=end_date.strftime('%Y-%m-%d'),
+                        interval=interval,
+                        progress=False,
+                        show_errors=False,
+                        auto_adjust=True,
+                        prepost=False
+                    )
+                    
+                    # Handle MultiIndex columns (download returns MultiIndex for single ticker)
+                    if isinstance(data.columns, pd.MultiIndex):
+                        data.columns = data.columns.droplevel(1)
+                        
+                except Exception as e:
+                    download_error = e
+                    # If JSON error and retries left, skip fallback and retry
+                    if attempt < self.max_retries - 1 and self._is_json_error(e):
+                        last_error = e
+                        continue  # Retry with backoff
+                
+                # If download() failed or returned empty, try Ticker().history() as fallback
+                if data is None or data.empty:
+                    try:
+                        stock = yf.Ticker(ticker)
+                        fallback_data = stock.history(period=period, interval=interval)
+                        if not fallback_data.empty:
+                            data = fallback_data
+                            print(f"  ℹ Using Ticker().history() fallback for {ticker}")
+                    except Exception as history_error:
+                        # Both methods failed
+                        if download_error:
+                            # Prefer JSON error for retry logic
+                            last_error = history_error if self._is_json_error(history_error) else download_error
+                        else:
+                            last_error = history_error
+                        raise last_error
                 
                 if data.empty:
                     if attempt < self.max_retries - 1:
+                        last_error = ValueError(f"No data returned for {ticker}")
                         continue  # Retry
                     raise ValueError(f"No data returned for {ticker}")
                 
@@ -223,13 +317,30 @@ class YFinanceClient:
                 return data
                 
             except Exception as e:
-                if attempt < self.max_retries - 1:
-                    if "429" in str(e) or "Too Many Requests" in str(e):
-                        print(f"  ⚠ Rate limited, waiting before retry...")
-                        time.sleep(self.retry_delay * (attempt + 1))
+                last_error = e
+                error_str = str(e).lower()
+                
+                # Check for rate limiting
+                if "429" in error_str or "too many requests" in error_str or "rate limit" in error_str:
+                    if attempt < self.max_retries - 1:
+                        backoff_delay = self._calculate_backoff(attempt)
+                        print(f"  ⚠ Rate limited, waiting {backoff_delay:.1f}s before retry...")
+                        time.sleep(backoff_delay)
                         continue
-                    elif "No data" not in str(e):
-                        continue  # Retry on other errors
+                
+                # Check for JSON parsing errors (empty response)
+                if self._is_json_error(e):
+                    if attempt < self.max_retries - 1:
+                        # JSON errors often indicate temporary blocking - wait longer
+                        backoff_delay = self._calculate_backoff(attempt)
+                        print(f"  ⚠ Empty/invalid response, waiting {backoff_delay:.1f}s before retry...")
+                        time.sleep(backoff_delay)
+                        continue
+                
+                # For other errors, retry if we have attempts left
+                if attempt < self.max_retries - 1:
+                    if "no data" not in error_str and "not found" not in error_str:
+                        continue  # Retry on transient errors
                 
                 # If all retries failed and allow_stale, try to use any cached data
                 if allow_stale:
@@ -258,8 +369,17 @@ class YFinanceClient:
                         except Exception as cache_err:
                             print(f"  ⚠ Could not read stale cache: {cache_err}")
                 
-                print(f"  ✗ Error fetching {ticker}: {e}")
-                raise
+                # Provide more detailed error message
+                if last_error:
+                    error_msg = str(last_error)
+                    if self._is_json_error(last_error):
+                        print(f"  ✗ Error fetching {ticker}: Empty/invalid response from Yahoo Finance (may be temporarily blocked)")
+                    else:
+                        print(f"  ✗ Error fetching {ticker}: {error_msg}")
+                    raise last_error
+                else:
+                    print(f"  ✗ Error fetching {ticker}: Unknown error")
+                    raise
     
     def get_latest_price(self, ticker: str, ttl_hours: int = 1) -> Optional[float]:
         """
