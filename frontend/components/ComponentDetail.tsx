@@ -102,7 +102,13 @@ export default function ComponentDetail({ component }: ComponentDetailProps) {
       
       {component.value !== null && component.value !== undefined && (
         <div className="text-xs text-gray-600 mb-1">
-          Value: {typeof component.value === 'number' ? component.value.toFixed(2) : component.value}
+          Value: {typeof component.value === 'number' 
+            ? component.value.toFixed(2) 
+            : typeof component.value === 'object' 
+              ? Object.entries(component.value).map(([key, val]) => 
+                  `${key.replace(/_/g, ' ')}: ${typeof val === 'number' ? val.toFixed(2) : val}`
+                ).join(', ')
+              : String(component.value)}
           {component.data_source && ` (${component.data_source})`}
         </div>
       )}
